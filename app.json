@@ -3,7 +3,7 @@
     "name": "ShiftMgmt",
     "slug": "ShiftMgmt",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
@@ -13,7 +13,10 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "This kiosk takes a clock photo for each time entry."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -25,6 +28,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow this kiosk to take an attendance photo for each clock event."
+        }
+      ]
+    ]
   }
 }
