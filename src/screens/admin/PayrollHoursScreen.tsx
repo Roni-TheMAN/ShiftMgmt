@@ -1,0 +1,1514 @@
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import AdminScreenContainer from '../../components/AdminScreenContainer';
+import PrimaryButton from '../../components/PrimaryButton';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
+import { useAdminSession } from '../../context/AdminSessionContext';
+import { buildPayrollHoursSummary } from '../../services/payroll/hoursAggregation';
+import { getPayPeriodPreviewByHistoryOffset } from '../../services/payroll/payPeriod';
+import { exportPayrollPeriodReportPdf } from '../../services/export/payrollReportExport';
+import {
+  deleteAdminShift,
+  findFirstClockOutAfterTimestamp,
+  listClockEventsWithEmployeeInRange,
+  upsertAdminShift,
+} from '../../services/repositories/clockEventRepository';
+import { listEmployees } from '../../services/repositories/employeeRepository';
+import { getPayrollSettings } from '../../services/repositories/settingsRepository';
+import { colors, spacing, typography } from '../../theme';
+import type { ClockEventWithEmployee, EmployeeRecord } from '../../types/database';
+import type { RootStackParamList } from '../../types/navigation';
+
+type PayrollHoursScreenProps = NativeStackScreenProps<
+  RootStackParamList,
+  'AdminPayrollHours'
+>;
+
+type PayrollHoursState = {
+  payPeriod: ReturnType<typeof getPayPeriodPreviewByHistoryOffset>;
+  schedule: {
+    payPeriodLength: string;
+    payPeriodStartDate: string;
+    payPeriodStartDay: string;
+    firstPayrollRunDays: number | null;
+  };
+  summary: ReturnType<typeof buildPayrollHoursSummary>;
+};
+
+type ShiftEntry =
+  ReturnType<typeof buildPayrollHoursSummary>['shiftsByEmployee'][number]['shifts'][number];
+
+type ShiftFormState = {
+  mode: 'ADD' | 'EDIT' | 'CLOSE';
+  employeeId: number;
+  employeeName: string;
+  clockInEventId: number | null;
+  clockOutEventId: number | null;
+  clockInInput: string;
+  clockOutInput: string;
+  includeClockOut: boolean;
+};
+
+function localDayKeyToRangeIso(dayKey: string) {
+  const [yearPart, monthPart, dayPart] = dayKey.split('-');
+  const year = Number.parseInt(yearPart, 10);
+  const month = Number.parseInt(monthPart, 10);
+  const day = Number.parseInt(dayPart, 10);
+  const start = new Date(year, month - 1, day, 0, 0, 0, 0);
+  const end = new Date(year, month - 1, day + 1, 0, 0, 0, 0);
+  return {
+    endIsoExclusive: end.toISOString(),
+    startIsoInclusive: start.toISOString(),
+  };
+}
+
+function collectOpenClockInsAtRangeEnd(events: ClockEventWithEmployee[]) {
+  const openClockInsByEmployee = new Map<number, ClockEventWithEmployee>();
+  for (const event of events) {
+    if (event.type === 'IN') {
+      openClockInsByEmployee.set(event.employee_id, event);
+      continue;
+    }
+    openClockInsByEmployee.delete(event.employee_id);
+  }
+  return Array.from(openClockInsByEmployee.values());
+}
+
+function mergePayrollEvents(
+  eventsInRange: ClockEventWithEmployee[],
+  carryoverClockOuts: ClockEventWithEmployee[],
+) {
+  const mergedEvents = [...eventsInRange];
+  const seenIds = new Set(eventsInRange.map((event) => event.id));
+
+  for (const event of carryoverClockOuts) {
+    if (seenIds.has(event.id)) {
+      continue;
+    }
+    seenIds.add(event.id);
+    mergedEvents.push(event);
+  }
+
+  mergedEvents.sort(
+    (a, b) =>
+      a.employee_id - b.employee_id ||
+      a.timestamp.localeCompare(b.timestamp) ||
+      a.id - b.id,
+  );
+
+  return mergedEvents;
+}
+
+function formatHours(hours: number) {
+  return `${hours.toFixed(2)}h`;
+}
+
+function formatDay(dayKey: string, short = false) {
+  return new Date(`${dayKey}T00:00:00`).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: short ? 'short' : 'numeric',
+    year: short ? undefined : 'numeric',
+  });
+}
+
+function formatTimestampShort(timestamp: string | null) {
+  if (!timestamp) {
+    return '-';
+  }
+  return new Date(timestamp).toLocaleString(undefined, {
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+  });
+}
+
+function formatEditedTime(timestamp: string) {
+  return new Date(timestamp).toLocaleString(undefined, {
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+  });
+}
+
+function toLocalDateTimeInput(isoTimestamp: string | null) {
+  if (!isoTimestamp) {
+    return '';
+  }
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function parseLocalDateTimeInput(value: string) {
+  const trimmed = value.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/.exec(trimmed);
+  if (!match) {
+    throw new Error('Use date/time format YYYY-MM-DD HH:mm.');
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  const hour = Number.parseInt(match[4], 10);
+  const minute = Number.parseInt(match[5], 10);
+  const date = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day ||
+    date.getHours() !== hour ||
+    date.getMinutes() !== minute
+  ) {
+    throw new Error('Invalid date/time value.');
+  }
+  return date.toISOString();
+}
+
+function formatShiftWindow(shift: ShiftEntry) {
+  if (shift.status === 'UNMATCHED_OUT') {
+    return `OUT ${formatTimestampShort(shift.clockOutTimestamp)}`;
+  }
+  const inText = formatTimestampShort(shift.clockInTimestamp);
+  const outText = shift.clockOutTimestamp
+    ? formatTimestampShort(shift.clockOutTimestamp)
+    : 'Open';
+  return `${inText} -> ${outText}`;
+}
+
+function historyLabel(periodsBack: number) {
+  if (periodsBack === 0) {
+    return 'Current Period';
+  }
+  if (periodsBack === 1) {
+    return '1 Period Back';
+  }
+  return `${periodsBack} Periods Back`;
+}
+
+export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenProps) {
+  const { isCompactWidth, isVeryCompactWidth } = useResponsiveLayout();
+  const { markActivity } = useAdminSession();
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [state, setState] = useState<PayrollHoursState | null>(null);
+  const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
+  const [periodsBack, setPeriodsBack] = useState(0);
+  const [expandedEmployeeId, setExpandedEmployeeId] = useState<number | null>(null);
+  const [showAllShiftLogs, setShowAllShiftLogs] = useState(false);
+  const [showAllDayTotals, setShowAllDayTotals] = useState(false);
+  const [isSavingShiftAction, setIsSavingShiftAction] = useState(false);
+  const [isExportingReport, setIsExportingReport] = useState(false);
+  const [shiftForm, setShiftForm] = useState<ShiftFormState | null>(null);
+
+  useEffect(() => {
+    setExpandedEmployeeId(null);
+    setShowAllShiftLogs(false);
+    setShowAllDayTotals(false);
+    setShiftForm(null);
+    setActionMessage(null);
+  }, [periodsBack]);
+
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [payrollSettings, allEmployees] = await Promise.all([
+        getPayrollSettings(),
+        listEmployees(),
+      ]);
+      const payPeriod = getPayPeriodPreviewByHistoryOffset(payrollSettings, periodsBack);
+      const startRange = localDayKeyToRangeIso(payPeriod.periodStartDate);
+      const endRange = localDayKeyToRangeIso(payPeriod.periodEndDate);
+
+      const eventsInRange = await listClockEventsWithEmployeeInRange(
+        startRange.startIsoInclusive,
+        endRange.endIsoExclusive,
+      );
+      const openClockInsAtRangeEnd = collectOpenClockInsAtRangeEnd(eventsInRange);
+      const carryoverClockOutCandidates = await Promise.all(
+        openClockInsAtRangeEnd.map((clockInEvent) =>
+          findFirstClockOutAfterTimestamp({
+            afterTimestampExclusive: clockInEvent.timestamp,
+            employeeId: clockInEvent.employee_id,
+          }),
+        ),
+      );
+      const carryoverClockOuts = carryoverClockOutCandidates.filter(
+        (event): event is ClockEventWithEmployee => Boolean(event),
+      );
+      const eventsForSummary = mergePayrollEvents(eventsInRange, carryoverClockOuts);
+
+      const summary = buildPayrollHoursSummary(eventsForSummary, {
+        periodEndDate: payPeriod.periodEndDate,
+        periodStartDate: payPeriod.periodStartDate,
+      });
+
+      setState({
+        payPeriod,
+        schedule: {
+          firstPayrollRunDays: payrollSettings.firstPayrollRunDays,
+          payPeriodLength: payrollSettings.payPeriodLength,
+          payPeriodStartDate: payrollSettings.payPeriodStartDate,
+          payPeriodStartDay: payrollSettings.payPeriodStartDay,
+        },
+        summary,
+      });
+      setEmployees(allEmployees);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : 'Failed to calculate payroll hours.',
+      );
+      setState(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [periodsBack]);
+
+  useFocusEffect(
+    useCallback(() => {
+      markActivity();
+      void loadData();
+    }, [loadData, markActivity]),
+  );
+
+  const completedShiftCount = useMemo(() => {
+    if (!state) {
+      return 0;
+    }
+    return state.summary.employeeTotals.reduce(
+      (sum, employee) => sum + employee.completedShiftCount,
+      0,
+    );
+  }, [state]);
+
+  const employeeCount = state?.summary.employeeTotals.length ?? 0;
+  const avgDailyHours = state
+    ? state.summary.totalPeriodHours / Math.max(state.payPeriod.periodLengthDays, 1)
+    : 0;
+  const displayedDayTotals = state
+    ? showAllDayTotals
+      ? state.summary.dayTotals
+      : state.summary.dayTotals.slice(-14)
+    : [];
+  const canGoOlder = state ? !state.payPeriod.isFirstPeriod : false;
+
+  const visibleShiftGroups = useMemo(() => {
+    if (!state) {
+      return [];
+    }
+    if (showAllShiftLogs) {
+      return state.summary.shiftsByEmployee;
+    }
+    if (expandedEmployeeId !== null) {
+      return state.summary.shiftsByEmployee.filter(
+        (employee) => employee.employeeId === expandedEmployeeId,
+      );
+    }
+    return [];
+  }, [expandedEmployeeId, showAllShiftLogs, state]);
+
+  const openAddShiftForm = () => {
+    const preferredEmployee =
+      employees.find((employee) => employee.id === expandedEmployeeId) ?? employees[0];
+    if (!preferredEmployee) {
+      setError('Create an employee first before adding shifts.');
+      return;
+    }
+
+    const now = new Date();
+    const startDefault = new Date(now.getTime() - 8 * 60 * 60 * 1000);
+    setShiftForm({
+      clockInEventId: null,
+      clockInInput: toLocalDateTimeInput(startDefault.toISOString()),
+      clockOutEventId: null,
+      clockOutInput: toLocalDateTimeInput(now.toISOString()),
+      employeeId: preferredEmployee.id,
+      employeeName: preferredEmployee.name,
+      includeClockOut: true,
+      mode: 'ADD',
+    });
+    setActionMessage(null);
+    setError(null);
+  };
+
+  const openEditShiftForm = (
+    employeeId: number,
+    employeeName: string,
+    shift: ShiftEntry,
+  ) => {
+    if (!shift.clockInEventId) {
+      setError('This shift cannot be edited because clock-in is missing.');
+      return;
+    }
+    const isOpenShift = !shift.clockOutEventId;
+    setShiftForm({
+      clockInEventId: shift.clockInEventId,
+      clockInInput: toLocalDateTimeInput(shift.clockInTimestamp),
+      clockOutEventId: shift.clockOutEventId,
+      clockOutInput: isOpenShift
+        ? toLocalDateTimeInput(new Date().toISOString())
+        : toLocalDateTimeInput(shift.clockOutTimestamp),
+      employeeId,
+      employeeName,
+      includeClockOut: true,
+      mode: isOpenShift ? 'CLOSE' : 'EDIT',
+    });
+    setActionMessage(null);
+    setError(null);
+  };
+
+  const closeForm = () => {
+    setShiftForm(null);
+  };
+
+  const exportCurrentPayPeriodReport = async () => {
+    if (!state) {
+      return;
+    }
+
+    setIsExportingReport(true);
+    setError(null);
+    setActionMessage(null);
+    markActivity();
+
+    try {
+      await exportPayrollPeriodReportPdf({
+        payPeriod: {
+          periodEndDate: state.payPeriod.periodEndDate,
+          periodLengthDays: state.payPeriod.periodLengthDays,
+          periodStartDate: state.payPeriod.periodStartDate,
+        },
+        periodLabel: historyLabel(periodsBack),
+        schedule: state.schedule,
+        summary: state.summary,
+      });
+      setActionMessage('Payroll report exported.');
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error
+          ? exportError.message
+          : 'Failed to export payroll report.',
+      );
+    } finally {
+      setIsExportingReport(false);
+    }
+  };
+
+  const saveShiftForm = async () => {
+    if (!shiftForm) {
+      return;
+    }
+
+    setIsSavingShiftAction(true);
+    setError(null);
+    setActionMessage(null);
+    markActivity();
+
+    try {
+      const clockInTimestamp = parseLocalDateTimeInput(shiftForm.clockInInput);
+      const clockOutTimestamp =
+        shiftForm.includeClockOut && shiftForm.clockOutInput.trim().length > 0
+          ? parseLocalDateTimeInput(shiftForm.clockOutInput)
+          : null;
+
+      await upsertAdminShift({
+        clockInEventId: shiftForm.clockInEventId,
+        clockInTimestamp,
+        clockOutEventId: shiftForm.clockOutEventId,
+        clockOutTimestamp,
+        employeeId: shiftForm.employeeId,
+      });
+
+      setActionMessage(
+        shiftForm.mode === 'ADD'
+          ? 'Shift added.'
+          : shiftForm.mode === 'CLOSE'
+            ? 'Open shift closed.'
+            : 'Shift updated.',
+      );
+      setShiftForm(null);
+      await loadData();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Shift update failed.');
+    } finally {
+      setIsSavingShiftAction(false);
+    }
+  };
+
+  const confirmDeleteShift = (
+    employeeId: number,
+    employeeName: string,
+    shift: ShiftEntry,
+  ) => {
+    if (!shift.clockInEventId && !shift.clockOutEventId) {
+      setError('This shift has no deletable events.');
+      return;
+    }
+
+    Alert.alert(
+      'Delete Shift',
+      `Delete this shift for ${employeeName}?`,
+      [
+        {
+          style: 'cancel',
+          text: 'Cancel',
+        },
+        {
+          style: 'destructive',
+          text: 'Delete',
+          onPress: () => {
+            void (async () => {
+              setIsSavingShiftAction(true);
+              setError(null);
+              setActionMessage(null);
+              markActivity();
+              try {
+                await deleteAdminShift({
+                  clockInEventId: shift.clockInEventId,
+                  clockOutEventId: shift.clockOutEventId,
+                  employeeId,
+                });
+                setActionMessage('Shift deleted.');
+                if (
+                  shiftForm &&
+                  shiftForm.employeeId === employeeId &&
+                  shiftForm.clockInEventId === shift.clockInEventId &&
+                  shiftForm.clockOutEventId === shift.clockOutEventId
+                ) {
+                  setShiftForm(null);
+                }
+                await loadData();
+              } catch (deleteError) {
+                setError(
+                  deleteError instanceof Error
+                    ? deleteError.message
+                    : 'Shift deletion failed.',
+                );
+              } finally {
+                setIsSavingShiftAction(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
+  return (
+    <AdminScreenContainer>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={[styles.headerRow, isCompactWidth ? styles.headerRowCompact : null]}>
+          <View>
+            <Text style={styles.title}>Payroll Hours</Text>
+            <Text style={styles.subtitle}>
+              Condensed payroll view with period history and shift-level detail.
+            </Text>
+          </View>
+          <View style={styles.headerActions}>
+            <PrimaryButton
+              disabled={isLoading || !state || isExportingReport}
+              fullWidth={isVeryCompactWidth}
+              onPress={() => {
+                void exportCurrentPayPeriodReport();
+              }}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title={isExportingReport ? 'Exporting...' : 'Report'}
+              variant="success"
+            />
+            <PrimaryButton
+              fullWidth={isVeryCompactWidth}
+              onPress={() => {
+                markActivity();
+                void loadData();
+              }}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title="Refresh"
+              variant="primary"
+            />
+            <PrimaryButton
+              fullWidth={isVeryCompactWidth}
+              onPress={() => {
+                navigation.goBack();
+              }}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title="Back"
+              variant="neutral"
+            />
+          </View>
+        </View>
+
+        {isLoading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : null}
+
+        {!isLoading && state ? (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>{historyLabel(periodsBack)}</Text>
+              <Text style={styles.periodLine}>
+                {formatDay(state.payPeriod.periodStartDate, true)} -{' '}
+                {formatDay(state.payPeriod.periodEndDate, true)}
+              </Text>
+              <Text style={styles.periodMeta}>
+                Schedule: {state.schedule.payPeriodLength} | Start day:{' '}
+                {state.schedule.payPeriodStartDay} | Anchor date:{' '}
+                {state.schedule.payPeriodStartDate}
+              </Text>
+              <Text style={styles.periodMeta}>
+                First run override:{' '}
+                {state.schedule.firstPayrollRunDays
+                  ? `${state.schedule.firstPayrollRunDays} day(s)`
+                  : 'None'}
+              </Text>
+
+              <View style={styles.periodNavRow}>
+                <Pressable
+                  disabled={!canGoOlder}
+                  onPress={() => {
+                    markActivity();
+                    setPeriodsBack((current) => current + 1);
+                  }}
+                  style={[
+                    styles.compactNavButton,
+                    !canGoOlder ? styles.compactNavButtonDisabled : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.compactNavText,
+                      !canGoOlder ? styles.compactNavTextDisabled : null,
+                    ]}
+                  >
+                    Older
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={periodsBack === 0}
+                  onPress={() => {
+                    markActivity();
+                    setPeriodsBack((current) => Math.max(0, current - 1));
+                  }}
+                  style={[
+                    styles.compactNavButton,
+                    periodsBack === 0 ? styles.compactNavButtonDisabled : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.compactNavText,
+                      periodsBack === 0 ? styles.compactNavTextDisabled : null,
+                    ]}
+                  >
+                    Newer
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={periodsBack === 0}
+                  onPress={() => {
+                    markActivity();
+                    setPeriodsBack(0);
+                  }}
+                  style={[
+                    styles.compactNavButton,
+                    periodsBack === 0 ? styles.compactNavButtonDisabled : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.compactNavText,
+                      periodsBack === 0 ? styles.compactNavTextDisabled : null,
+                    ]}
+                  >
+                    Current
+                  </Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.quickHistoryRow}>
+                {[0, 1, 2, 3, 4].map((offset) => (
+                  <Pressable
+                    key={offset}
+                    onPress={() => {
+                      markActivity();
+                      setPeriodsBack(offset);
+                    }}
+                    style={[
+                      styles.quickHistoryChip,
+                      periodsBack === offset ? styles.quickHistoryChipActive : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.quickHistoryText,
+                        periodsBack === offset ? styles.quickHistoryTextActive : null,
+                      ]}
+                    >
+                      {offset === 0 ? 'Now' : `-${offset}`}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.metricsWrap}>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Total Hours</Text>
+                <Text style={styles.metricValue}>
+                  {formatHours(state.summary.totalPeriodHours)}
+                </Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Shifts</Text>
+                <Text style={styles.metricValue}>{completedShiftCount}</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Employees</Text>
+                <Text style={styles.metricValue}>{employeeCount}</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Avg / Day</Text>
+                <Text style={styles.metricValue}>{formatHours(avgDailyHours)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.dualColumnRow}>
+              <View style={styles.dualCard}>
+                <Text style={styles.sectionTitle}>Week Totals</Text>
+                {state.summary.weekTotals.map((week) => (
+                  <View key={week.weekNumber} style={styles.compactRow}>
+                    <Text style={styles.compactRowLabel}>
+                      W{week.weekNumber} {formatDay(week.startDate, true)} -{' '}
+                      {formatDay(week.endDate, true)}
+                    </Text>
+                    <Text style={styles.compactRowValue}>{formatHours(week.hours)}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.dualCard}>
+                <Text style={styles.sectionTitle}>Day Totals</Text>
+                {displayedDayTotals.length === 0 ? (
+                  <Text style={styles.emptyText}>No completed shifts in this period.</Text>
+                ) : (
+                  displayedDayTotals.map((day) => (
+                    <View key={day.date} style={styles.compactRow}>
+                      <Text style={styles.compactRowLabel}>{formatDay(day.date, true)}</Text>
+                      <Text style={styles.compactRowValue}>{formatHours(day.hours)}</Text>
+                    </View>
+                  ))
+                )}
+                {state.summary.dayTotals.length > 14 ? (
+                  <Pressable
+                    onPress={() => {
+                      markActivity();
+                      setShowAllDayTotals((current) => !current);
+                    }}
+                    style={styles.inlineLinkButton}
+                  >
+                    <Text style={styles.inlineLinkText}>
+                      {showAllDayTotals ? 'Show Last 14 Days' : 'Show All Days'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Employee Totals</Text>
+              {state.summary.employeeTotals.length === 0 ? (
+                <Text style={styles.emptyText}>No employee totals for this period.</Text>
+              ) : (
+                state.summary.employeeTotals.map((employee) => {
+                  const isSelected = expandedEmployeeId === employee.employeeId;
+                  return (
+                    <Pressable
+                      key={employee.employeeId}
+                      onPress={() => {
+                        markActivity();
+                        setExpandedEmployeeId((current) =>
+                          current === employee.employeeId ? null : employee.employeeId,
+                        );
+                        setShowAllShiftLogs(false);
+                      }}
+                      style={[
+                        styles.employeeRow,
+                        isSelected ? styles.employeeRowSelected : null,
+                      ]}
+                    >
+                      <Text style={styles.employeeRowName}>
+                        {employee.employeeName} ({employee.completedShiftCount} shifts)
+                      </Text>
+                      <View style={styles.employeeRowRight}>
+                        <Text style={styles.employeeRowHours}>{formatHours(employee.hours)}</Text>
+                        <Text style={styles.employeeRowHint}>
+                          {isSelected ? 'Selected' : 'Tap for Logs'}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+
+            <View style={styles.card}>
+              {shiftForm ? (
+                <View style={styles.shiftEditorCard}>
+                  <Text style={styles.sectionTitle}>
+                    {shiftForm.mode === 'ADD'
+                      ? 'Add Shift'
+                      : shiftForm.mode === 'CLOSE'
+                        ? 'Close / Edit Open Shift'
+                        : 'Edit Shift'}
+                  </Text>
+                  <Text style={styles.shiftEditorMeta}>
+                    Employee: {shiftForm.employeeName}
+                  </Text>
+
+                  {shiftForm.mode === 'ADD' ? (
+                    <View style={styles.employeePickerRow}>
+                      {employees.map((employee) => (
+                        <Pressable
+                          key={employee.id}
+                          onPress={() => {
+                            markActivity();
+                            setShiftForm((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    employeeId: employee.id,
+                                    employeeName: employee.name,
+                                  }
+                                : current,
+                            );
+                          }}
+                          style={[
+                            styles.employeeChip,
+                            shiftForm.employeeId === employee.id
+                              ? styles.employeeChipActive
+                              : null,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.employeeChipText,
+                              shiftForm.employeeId === employee.id
+                                ? styles.employeeChipTextActive
+                                : null,
+                            ]}
+                          >
+                            {employee.name}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  <Text style={styles.fieldLabel}>Clock In (YYYY-MM-DD HH:mm)</Text>
+                  <TextInput
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!isSavingShiftAction}
+                    onChangeText={(value) => {
+                      setShiftForm((current) =>
+                        current
+                          ? {
+                              ...current,
+                              clockInInput: value,
+                            }
+                          : current,
+                      );
+                    }}
+                    placeholder="2026-03-06 09:00"
+                    placeholderTextColor={colors.textSecondary}
+                    style={styles.input}
+                    value={shiftForm.clockInInput}
+                  />
+
+                  <View style={styles.closeToggleRow}>
+                    <Pressable
+                      onPress={() => {
+                        markActivity();
+                        setShiftForm((current) =>
+                          current
+                            ? {
+                                ...current,
+                                includeClockOut: true,
+                              }
+                            : current,
+                        );
+                      }}
+                      style={[
+                        styles.inlineActionButton,
+                        shiftForm.includeClockOut ? styles.inlineActionButtonActive : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.inlineActionText,
+                          shiftForm.includeClockOut ? styles.inlineActionTextActive : null,
+                        ]}
+                      >
+                        With Clock Out
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        markActivity();
+                        setShiftForm((current) =>
+                          current
+                            ? {
+                                ...current,
+                                includeClockOut: false,
+                              }
+                            : current,
+                        );
+                      }}
+                      style={[
+                        styles.inlineActionButton,
+                        !shiftForm.includeClockOut ? styles.inlineActionButtonActive : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.inlineActionText,
+                          !shiftForm.includeClockOut ? styles.inlineActionTextActive : null,
+                        ]}
+                      >
+                        Open Shift
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  {shiftForm.includeClockOut ? (
+                    <>
+                      <Text style={styles.fieldLabel}>Clock Out (YYYY-MM-DD HH:mm)</Text>
+                      <TextInput
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        editable={!isSavingShiftAction}
+                        onChangeText={(value) => {
+                          setShiftForm((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  clockOutInput: value,
+                                }
+                              : current,
+                          );
+                        }}
+                        placeholder="2026-03-06 17:00"
+                        placeholderTextColor={colors.textSecondary}
+                        style={styles.input}
+                        value={shiftForm.clockOutInput}
+                      />
+                    </>
+                  ) : null}
+
+                  <View style={styles.shiftEditorActions}>
+                    <PrimaryButton
+                      disabled={isSavingShiftAction}
+                      onPress={() => {
+                        void saveShiftForm();
+                      }}
+                      title={isSavingShiftAction ? 'Saving...' : 'Save Shift'}
+                      variant="success"
+                    />
+                    <PrimaryButton
+                      onPress={closeForm}
+                      title="Cancel"
+                      variant="neutral"
+                    />
+                  </View>
+                </View>
+              ) : null}
+
+              <View
+                style={[styles.shiftHeaderRow, isCompactWidth ? styles.shiftHeaderRowCompact : null]}
+              >
+                <Text style={styles.sectionTitle}>Shift Logs</Text>
+                <View style={styles.shiftHeaderActions}>
+                  <Pressable
+                    onPress={() => {
+                      markActivity();
+                      openAddShiftForm();
+                    }}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>Add Shift</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      markActivity();
+                      setShowAllShiftLogs((current) => !current);
+                    }}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>
+                      {showAllShiftLogs ? 'Show Selected' : 'Show All'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      markActivity();
+                      setExpandedEmployeeId(null);
+                    }}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>Clear</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {visibleShiftGroups.length === 0 ? (
+                <Text style={styles.emptyText}>
+                  Select an employee row above or choose "Show All".
+                </Text>
+              ) : (
+                visibleShiftGroups.map((employee) => (
+                  <View key={employee.employeeId} style={styles.shiftEmployeeBlock}>
+                    <Text style={styles.shiftEmployeeTitle}>
+                      {employee.employeeName} - {formatHours(employee.totalHours)}
+                    </Text>
+                    {employee.shifts.map((shift, index) => (
+                      <View
+                        key={`${employee.employeeId}-${shift.clockInTimestamp ?? 'no-in'}-${index}`}
+                      style={styles.shiftCompactRow}
+                    >
+                        <Text
+                          style={[
+                            styles.shiftStatusBadge,
+                            shift.status === 'COMPLETE'
+                              ? styles.shiftStatusComplete
+                              : shift.status === 'OPEN'
+                                ? styles.shiftStatusOpen
+                                : styles.shiftStatusUnmatched,
+                          ]}
+                        >
+                          {shift.status}
+                        </Text>
+                        <Text style={styles.shiftWindowText}>{formatShiftWindow(shift)}</Text>
+                        {shift.clockOutSource === 'AUTO' ? (
+                          <Text style={styles.autoTag}>AUTO OUT</Text>
+                        ) : null}
+                        {shift.adminTag && shift.adminTag !== 'NONE' ? (
+                          <Text style={styles.editTag}>{shift.adminTag}</Text>
+                        ) : null}
+                        {shift.lastEditedAt ? (
+                          <Text style={styles.editTime}>
+                            Edit: {formatEditedTime(shift.lastEditedAt)}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.shiftHoursText}>
+                          {formatHours(shift.durationHours)}
+                        </Text>
+                        <View style={styles.shiftActionRow}>
+                          {(shift.clockInEventId || shift.clockOutEventId) &&
+                          shift.status !== 'UNMATCHED_OUT' ? (
+                            <Pressable
+                              onPress={() => {
+                                markActivity();
+                                openEditShiftForm(employee.employeeId, employee.employeeName, shift);
+                              }}
+                              style={styles.shiftInlineButton}
+                            >
+                              <Text style={styles.shiftInlineButtonText}>
+                                {shift.status === 'OPEN' ? 'Close/Edit' : 'Edit'}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                          {(shift.clockInEventId || shift.clockOutEventId) ? (
+                            <Pressable
+                              onPress={() => {
+                                markActivity();
+                                confirmDeleteShift(employee.employeeId, employee.employeeName, shift);
+                              }}
+                              style={[styles.shiftInlineButton, styles.shiftInlineDeleteButton]}
+                            >
+                              <Text
+                                style={[
+                                  styles.shiftInlineButtonText,
+                                  styles.shiftInlineDeleteButtonText,
+                                ]}
+                              >
+                                Delete
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ))
+              )}
+            </View>
+
+            {state.summary.warnings.length > 0 ? (
+              <View style={styles.warningCard}>
+                <Text style={styles.warningTitle}>Data Warnings</Text>
+                {state.summary.warnings.map((warning, index) => (
+                  <Text key={`${warning}-${index}`} style={styles.warningText}>
+                    {`- ${warning}`}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : null}
+
+        {actionMessage ? <Text style={styles.successText}>{actionMessage}</Text> : null}
+        {!isLoading && error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </ScrollView>
+    </AdminScreenContainer>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  centered: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 180,
+  },
+  compactNavButton: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    minWidth: 96,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  compactNavButtonDisabled: {
+    opacity: 0.45,
+  },
+  compactNavText: {
+    ...typography.label,
+    color: colors.textPrimary,
+  },
+  compactNavTextDisabled: {
+    color: colors.textSecondary,
+  },
+  compactRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+  },
+  compactRowLabel: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  compactRowValue: {
+    ...typography.label,
+    color: colors.textPrimary,
+  },
+  content: {
+    gap: spacing.sm,
+    paddingBottom: spacing.lg,
+  },
+  dualCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 280,
+    padding: spacing.md,
+  },
+  dualColumnRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  employeeChip: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  employeeChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  employeeChipText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+  },
+  employeeChipTextActive: {
+    color: colors.textInverse,
+  },
+  employeePickerRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  employeeRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+  },
+  employeeRowHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'right',
+  },
+  employeeRowHours: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    textAlign: 'right',
+  },
+  employeeRowName: {
+    ...typography.body,
+    color: colors.textPrimary,
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  employeeRowRight: {
+    alignItems: 'flex-end',
+  },
+  employeeRowSelected: {
+    backgroundColor: '#ECEFF3',
+  },
+  editTag: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  editTime: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  emptyText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+  },
+  errorText: {
+    ...typography.label,
+    color: colors.danger,
+  },
+  compactActionButton: {
+    flex: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  headerRowCompact: {
+    alignItems: 'stretch',
+    flexDirection: 'column',
+    gap: spacing.sm,
+  },
+  inlineActionButton: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  inlineActionButtonActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  inlineActionText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    textTransform: 'uppercase',
+  },
+  inlineActionTextActive: {
+    color: colors.textInverse,
+  },
+  inlineLinkButton: {
+    marginTop: spacing.sm,
+  },
+  inlineLinkText: {
+    ...typography.caption,
+    color: colors.primary,
+    textDecorationLine: 'underline',
+  },
+  metricCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    minWidth: 150,
+    padding: spacing.sm,
+  },
+  metricLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  metricValue: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+  },
+  metricsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  periodLine: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+  },
+  periodMeta: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+  },
+  periodNavRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  quickHistoryChip: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    minWidth: 44,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  quickHistoryChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  quickHistoryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  quickHistoryText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  quickHistoryTextActive: {
+    color: colors.textInverse,
+  },
+  shiftActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginLeft: 'auto',
+  },
+  sectionTitle: {
+    ...typography.h2,
+    color: colors.primary,
+  },
+  closeToggleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  fieldLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+    textTransform: 'uppercase',
+  },
+  input: {
+    ...typography.body,
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  shiftCompactRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  shiftEditorActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  shiftEditorCard: {
+    backgroundColor: '#EEF2F6',
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+    padding: spacing.sm,
+  },
+  shiftEditorMeta: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+  },
+  shiftEmployeeBlock: {
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+  },
+  shiftEmployeeTitle: {
+    ...typography.label,
+    color: colors.textPrimary,
+  },
+  shiftHeaderActions: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
+  shiftHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  shiftHeaderRowCompact: {
+    alignItems: 'stretch',
+    flexDirection: 'column',
+    gap: spacing.sm,
+  },
+  shiftHoursText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    marginLeft: 'auto',
+  },
+  shiftStatusBadge: {
+    ...typography.caption,
+    borderRadius: 999,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    textTransform: 'uppercase',
+  },
+  shiftStatusComplete: {
+    backgroundColor: '#DDEBDD',
+    color: colors.success,
+  },
+  shiftStatusOpen: {
+    backgroundColor: '#FFF6E8',
+    color: colors.warning,
+  },
+  shiftStatusUnmatched: {
+    backgroundColor: '#F3DADA',
+    color: colors.danger,
+  },
+  shiftInlineButton: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+  },
+  shiftInlineButtonText: {
+    ...typography.caption,
+    color: colors.primary,
+  },
+  shiftInlineDeleteButton: {
+    borderColor: colors.danger,
+  },
+  shiftInlineDeleteButtonText: {
+    color: colors.danger,
+  },
+  autoTag: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '700',
+  },
+  shiftWindowText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    flexShrink: 1,
+  },
+  successText: {
+    ...typography.label,
+    color: colors.success,
+  },
+  subtitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+  },
+  title: {
+    ...typography.title,
+    color: colors.primary,
+    textTransform: 'uppercase',
+  },
+  warningCard: {
+    backgroundColor: '#FFF6E8',
+    borderColor: colors.warning,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  warningText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+  },
+  warningTitle: {
+    ...typography.h2,
+    color: colors.warning,
+  },
+});

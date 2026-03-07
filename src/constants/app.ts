@@ -1,0 +1,11 @@
+export const APP_NAME = 'Shift Clock';
+export const DB_NAME = 'shiftmgmt.db';
+export const EMPLOYEE_PIN_LENGTH = 4;
+export const ADMIN_PIN_LENGTH = 4;
+export const DEFAULT_ADMIN_PIN = '0000';
+export const ADMIN_SESSION_TIMEOUT_MS = 2 * 60 * 1000;
+export const CONFIRMATION_RESET_MS = 5 * 1000;
+export const PHOTO_DIRECTORY_NAME = 'clock-photos';
+export const AUTO_CLOCK_OUT_MARKER_PHOTO_PATH = 'AUTO_CLOCK_OUT';
+export const ADMIN_MANUAL_EVENT_MARKER_PHOTO_PATH = 'ADMIN_MANUAL_EVENT';
+export const AUTO_CLOCK_OUT_SWEEP_INTERVAL_MS = 60 * 1000;
