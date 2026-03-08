@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import AdminScreenContainer from '../../components/AdminScreenContainer';
+import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
@@ -123,7 +124,7 @@ export default function EmployeeFormScreen({
   }
 
   return (
-    <AdminScreenContainer>
+    <AdminScrollContainer>
       <Text style={styles.title}>{isCreateMode ? 'Add Employee' : 'Edit Employee'}</Text>
       <Text style={styles.subtitle}>
         {isCreateMode
@@ -202,7 +203,7 @@ export default function EmployeeFormScreen({
           />
         </View>
       </View>
-    </AdminScreenContainer>
+    </AdminScrollContainer>
   );
 }
 

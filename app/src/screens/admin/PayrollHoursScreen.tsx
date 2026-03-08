@@ -1,17 +1,21 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import DateTimePicker, {
+  DateTimePickerAndroid,
+  type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import AdminScreenContainer from '../../components/AdminScreenContainer';
+import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
@@ -58,6 +62,13 @@ type ShiftFormState = {
   clockInInput: string;
   clockOutInput: string;
   includeClockOut: boolean;
+};
+
+type ShiftPickerTarget = 'clockIn' | 'clockOut';
+type ShiftPickerMode = 'date' | 'time';
+type ActiveShiftPicker = {
+  mode: ShiftPickerMode;
+  target: ShiftPickerTarget;
 };
 
 function localDayKeyToRangeIso(dayKey: string) {
@@ -184,6 +195,71 @@ function parseLocalDateTimeInput(value: string) {
   return date.toISOString();
 }
 
+function parseLocalDateTimeInputToDate(value: string, fallback = new Date()) {
+  try {
+    return new Date(parseLocalDateTimeInput(value));
+  } catch {
+    return fallback;
+  }
+}
+
+function mergeShiftPickerValue(
+  currentInput: string,
+  selectedDate: Date,
+  mode: ShiftPickerMode,
+) {
+  const current = parseLocalDateTimeInputToDate(currentInput, selectedDate);
+  const next = new Date(current);
+
+  if (mode === 'date') {
+    next.setFullYear(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+    );
+  } else {
+    next.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+  }
+
+  return toLocalDateTimeInput(next.toISOString());
+}
+
+function formatShiftFormDate(value: string) {
+  return parseLocalDateTimeInputToDate(value).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatShiftFormDateTime(value: string) {
+  return parseLocalDateTimeInputToDate(value).toLocaleString(undefined, {
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatShiftFormTime(value: string) {
+  return parseLocalDateTimeInputToDate(value).toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function addHoursToShiftInput(value: string, hours: number) {
+  const current = parseLocalDateTimeInputToDate(value);
+  return toLocalDateTimeInput(new Date(current.getTime() + hours * 60 * 60 * 1000).toISOString());
+}
+
+function formatDurationClock(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m`;
+}
+
 function formatShiftWindow(shift: ShiftEntry) {
   if (shift.status === 'UNMATCHED_OUT') {
     return `OUT ${formatTimestampShort(shift.clockOutTimestamp)}`;
@@ -208,6 +284,7 @@ function historyLabel(periodsBack: number) {
 export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenProps) {
   const { isCompactWidth, isVeryCompactWidth } = useResponsiveLayout();
   const { markActivity } = useAdminSession();
+  const usesNativeShiftPickers = Platform.OS === 'android' || Platform.OS === 'ios';
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -220,12 +297,14 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
   const [isSavingShiftAction, setIsSavingShiftAction] = useState(false);
   const [isExportingReport, setIsExportingReport] = useState(false);
   const [shiftForm, setShiftForm] = useState<ShiftFormState | null>(null);
+  const [activeShiftPicker, setActiveShiftPicker] = useState<ActiveShiftPicker | null>(null);
 
   useEffect(() => {
     setExpandedEmployeeId(null);
     setShowAllShiftLogs(false);
     setShowAllDayTotals(false);
     setShiftForm(null);
+    setActiveShiftPicker(null);
     setActionMessage(null);
   }, [periodsBack]);
 
@@ -328,6 +407,130 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
     return [];
   }, [expandedEmployeeId, showAllShiftLogs, state]);
 
+  const updateShiftFormInput = useCallback(
+    (target: ShiftPickerTarget, nextValue: string) => {
+      setError(null);
+      setActionMessage(null);
+      setShiftForm((current) => {
+        if (!current) {
+          return current;
+        }
+        return target === 'clockIn'
+          ? {
+              ...current,
+              clockInInput: nextValue,
+            }
+          : {
+              ...current,
+              clockOutInput: nextValue,
+            };
+      });
+    },
+    [],
+  );
+
+  const updateShiftFormFromPicker = useCallback(
+    (target: ShiftPickerTarget, mode: ShiftPickerMode, selectedDate: Date) => {
+      setError(null);
+      setActionMessage(null);
+      setShiftForm((current) => {
+        if (!current) {
+          return current;
+        }
+        const currentInput =
+          target === 'clockIn' ? current.clockInInput : current.clockOutInput;
+        const nextValue = mergeShiftPickerValue(currentInput, selectedDate, mode);
+        return target === 'clockIn'
+          ? {
+              ...current,
+              clockInInput: nextValue,
+            }
+          : {
+              ...current,
+              clockOutInput: nextValue,
+            };
+      });
+    },
+    [],
+  );
+
+  const openShiftPicker = useCallback(
+    (target: ShiftPickerTarget, mode: ShiftPickerMode) => {
+      if (!shiftForm) {
+        return;
+      }
+
+      markActivity();
+      setError(null);
+      const currentInput =
+        target === 'clockIn' ? shiftForm.clockInInput : shiftForm.clockOutInput;
+      const currentDate = parseLocalDateTimeInputToDate(currentInput);
+
+      if (Platform.OS === 'android') {
+        DateTimePickerAndroid.open({
+          display: mode === 'date' ? 'calendar' : 'clock',
+          is24Hour: false,
+          mode,
+          onChange: (event, selectedDate) => {
+            if (event.type !== 'set' || !selectedDate) {
+              return;
+            }
+            updateShiftFormFromPicker(target, mode, selectedDate);
+          },
+          value: currentDate,
+        });
+        return;
+      }
+
+      if (Platform.OS === 'ios') {
+        setActiveShiftPicker({ mode, target });
+      }
+    },
+    [markActivity, shiftForm, updateShiftFormFromPicker],
+  );
+
+  const handleIosShiftPickerChange = useCallback(
+    (event: DateTimePickerEvent, selectedDate?: Date) => {
+      if (!activeShiftPicker || !selectedDate || event.type === 'dismissed') {
+        return;
+      }
+      updateShiftFormFromPicker(activeShiftPicker.target, activeShiftPicker.mode, selectedDate);
+    },
+    [activeShiftPicker, updateShiftFormFromPicker],
+  );
+
+  const activeShiftPickerValue = useMemo(() => {
+    if (!shiftForm || !activeShiftPicker) {
+      return null;
+    }
+    return parseLocalDateTimeInputToDate(
+      activeShiftPicker.target === 'clockIn'
+        ? shiftForm.clockInInput
+        : shiftForm.clockOutInput,
+    );
+  }, [activeShiftPicker, shiftForm]);
+
+  const shiftDurationPreview = useMemo(() => {
+    if (!shiftForm || !shiftForm.includeClockOut) {
+      return null;
+    }
+
+    try {
+      const start = new Date(parseLocalDateTimeInput(shiftForm.clockInInput)).getTime();
+      const end = new Date(parseLocalDateTimeInput(shiftForm.clockOutInput)).getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        return null;
+      }
+      if (end <= start) {
+        return 'Clock out must be after clock in.';
+      }
+      const durationMinutes = Math.round((end - start) / (60 * 1000));
+      return `Duration ${formatDurationClock(durationMinutes)}`;
+    } catch {
+      return null;
+    }
+  }, [shiftForm]);
+
   const openAddShiftForm = () => {
     const preferredEmployee =
       employees.find((employee) => employee.id === expandedEmployeeId) ?? employees[0];
@@ -348,6 +551,7 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
       includeClockOut: true,
       mode: 'ADD',
     });
+    setActiveShiftPicker(null);
     setActionMessage(null);
     setError(null);
   };
@@ -374,11 +578,13 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
       includeClockOut: true,
       mode: isOpenShift ? 'CLOSE' : 'EDIT',
     });
+    setActiveShiftPicker(null);
     setActionMessage(null);
     setError(null);
   };
 
   const closeForm = () => {
+    setActiveShiftPicker(null);
     setShiftForm(null);
   };
 
@@ -432,6 +638,14 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
           ? parseLocalDateTimeInput(shiftForm.clockOutInput)
           : null;
 
+      if (
+        clockOutTimestamp &&
+        new Date(clockOutTimestamp).getTime() <= new Date(clockInTimestamp).getTime()
+      ) {
+        setError('Clock out must be after clock in.');
+        return;
+      }
+
       await upsertAdminShift({
         clockInEventId: shiftForm.clockInEventId,
         clockInTimestamp,
@@ -447,6 +661,7 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
             ? 'Open shift closed.'
             : 'Shift updated.',
       );
+      setActiveShiftPicker(null);
       setShiftForm(null);
       await loadData();
     } catch (saveError) {
@@ -516,8 +731,7 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
   };
 
   return (
-    <AdminScreenContainer>
-      <ScrollView contentContainerStyle={styles.content}>
+    <AdminScrollContainer style={styles.content}>
         <View style={[styles.headerRow, isCompactWidth ? styles.headerRowCompact : null]}>
           <View>
             <Text style={styles.title}>Payroll Hours</Text>
@@ -826,31 +1040,95 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                     </View>
                   ) : null}
 
-                  <Text style={styles.fieldLabel}>Clock In (YYYY-MM-DD HH:mm)</Text>
-                  <TextInput
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    editable={!isSavingShiftAction}
-                    onChangeText={(value) => {
-                      setShiftForm((current) =>
-                        current
-                          ? {
-                              ...current,
-                              clockInInput: value,
-                            }
-                          : current,
-                      );
-                    }}
-                    placeholder="2026-03-06 09:00"
-                    placeholderTextColor={colors.textSecondary}
-                    style={styles.input}
-                    value={shiftForm.clockInInput}
-                  />
+                  <Text style={styles.fieldLabel}>Clock In</Text>
+                  {usesNativeShiftPickers ? (
+                    <>
+                      <View
+                        style={[
+                          styles.dateTimeRow,
+                          isCompactWidth ? styles.dateTimeRowCompact : null,
+                        ]}
+                      >
+                        <Pressable
+                          onPress={() => {
+                            void openShiftPicker('clockIn', 'date');
+                          }}
+                          style={[
+                            styles.dateTimeFieldButton,
+                            activeShiftPicker?.target === 'clockIn' &&
+                            activeShiftPicker.mode === 'date'
+                              ? styles.dateTimeFieldButtonActive
+                              : null,
+                          ]}
+                        >
+                          <Text style={styles.dateTimeFieldLabel}>Date</Text>
+                          <Text style={styles.dateTimeFieldValue}>
+                            {formatShiftFormDate(shiftForm.clockInInput)}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            void openShiftPicker('clockIn', 'time');
+                          }}
+                          style={[
+                            styles.dateTimeFieldButton,
+                            activeShiftPicker?.target === 'clockIn' &&
+                            activeShiftPicker.mode === 'time'
+                              ? styles.dateTimeFieldButtonActive
+                              : null,
+                          ]}
+                        >
+                          <Text style={styles.dateTimeFieldLabel}>Time</Text>
+                          <Text style={styles.dateTimeFieldValue}>
+                            {formatShiftFormTime(shiftForm.clockInInput)}
+                          </Text>
+                        </Pressable>
+                      </View>
+                      <View style={styles.quickAdjustRow}>
+                        <Pressable
+                          onPress={() => {
+                            markActivity();
+                            updateShiftFormInput(
+                              'clockIn',
+                              toLocalDateTimeInput(new Date().toISOString()),
+                            );
+                          }}
+                          style={styles.quickAdjustButton}
+                        >
+                          <Text style={styles.quickAdjustText}>Now</Text>
+                        </Pressable>
+                      </View>
+                      <Text style={styles.fieldPreview}>
+                        {formatShiftFormDateTime(shiftForm.clockInInput)}
+                      </Text>
+                    </>
+                  ) : (
+                    <TextInput
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!isSavingShiftAction}
+                      onChangeText={(value) => {
+                        setShiftForm((current) =>
+                          current
+                            ? {
+                                ...current,
+                                clockInInput: value,
+                              }
+                            : current,
+                        );
+                      }}
+                      placeholder="2026-03-06 09:00"
+                      placeholderTextColor={colors.textSecondary}
+                      style={styles.input}
+                      value={shiftForm.clockInInput}
+                    />
+                  )}
 
                   <View style={styles.closeToggleRow}>
                     <Pressable
                       onPress={() => {
                         markActivity();
+                        setActiveShiftPicker(null);
                         setShiftForm((current) =>
                           current
                             ? {
@@ -877,6 +1155,9 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                     <Pressable
                       onPress={() => {
                         markActivity();
+                        setActiveShiftPicker((current) =>
+                          current?.target === 'clockOut' ? null : current,
+                        );
                         setShiftForm((current) =>
                           current
                             ? {
@@ -904,32 +1185,152 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
 
                   {shiftForm.includeClockOut ? (
                     <>
-                      <Text style={styles.fieldLabel}>Clock Out (YYYY-MM-DD HH:mm)</Text>
-                      <TextInput
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        editable={!isSavingShiftAction}
-                        onChangeText={(value) => {
-                          setShiftForm((current) =>
-                            current
-                              ? {
-                                  ...current,
-                                  clockOutInput: value,
-                                }
-                              : current,
-                          );
-                        }}
-                        placeholder="2026-03-06 17:00"
-                        placeholderTextColor={colors.textSecondary}
-                        style={styles.input}
-                        value={shiftForm.clockOutInput}
-                      />
+                      <Text style={styles.fieldLabel}>Clock Out</Text>
+                      {usesNativeShiftPickers ? (
+                        <>
+                          <View
+                            style={[
+                              styles.dateTimeRow,
+                              isCompactWidth ? styles.dateTimeRowCompact : null,
+                            ]}
+                          >
+                            <Pressable
+                              onPress={() => {
+                                void openShiftPicker('clockOut', 'date');
+                              }}
+                              style={[
+                                styles.dateTimeFieldButton,
+                                activeShiftPicker?.target === 'clockOut' &&
+                                activeShiftPicker.mode === 'date'
+                                  ? styles.dateTimeFieldButtonActive
+                                  : null,
+                              ]}
+                            >
+                              <Text style={styles.dateTimeFieldLabel}>Date</Text>
+                              <Text style={styles.dateTimeFieldValue}>
+                                {formatShiftFormDate(shiftForm.clockOutInput)}
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => {
+                                void openShiftPicker('clockOut', 'time');
+                              }}
+                              style={[
+                                styles.dateTimeFieldButton,
+                                activeShiftPicker?.target === 'clockOut' &&
+                                activeShiftPicker.mode === 'time'
+                                  ? styles.dateTimeFieldButtonActive
+                                  : null,
+                              ]}
+                            >
+                              <Text style={styles.dateTimeFieldLabel}>Time</Text>
+                              <Text style={styles.dateTimeFieldValue}>
+                                {formatShiftFormTime(shiftForm.clockOutInput)}
+                              </Text>
+                            </Pressable>
+                          </View>
+                          <View style={styles.quickAdjustRow}>
+                            <Pressable
+                              onPress={() => {
+                                markActivity();
+                                updateShiftFormInput(
+                                  'clockOut',
+                                  toLocalDateTimeInput(new Date().toISOString()),
+                                );
+                              }}
+                              style={styles.quickAdjustButton}
+                            >
+                              <Text style={styles.quickAdjustText}>Now</Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => {
+                                markActivity();
+                                updateShiftFormInput(
+                                  'clockOut',
+                                  addHoursToShiftInput(shiftForm.clockInInput, 8),
+                                );
+                              }}
+                              style={styles.quickAdjustButton}
+                            >
+                              <Text style={styles.quickAdjustText}>+8h</Text>
+                            </Pressable>
+                          </View>
+                          <Text style={styles.fieldPreview}>
+                            {formatShiftFormDateTime(shiftForm.clockOutInput)}
+                          </Text>
+                        </>
+                      ) : (
+                        <TextInput
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          editable={!isSavingShiftAction}
+                          onChangeText={(value) => {
+                            setShiftForm((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    clockOutInput: value,
+                                  }
+                                : current,
+                            );
+                          }}
+                          placeholder="2026-03-06 17:00"
+                          placeholderTextColor={colors.textSecondary}
+                          style={styles.input}
+                          value={shiftForm.clockOutInput}
+                        />
+                      )}
+                      {shiftDurationPreview ? (
+                        <Text
+                          style={[
+                            styles.durationPreview,
+                            shiftDurationPreview === 'Clock out must be after clock in.'
+                              ? styles.durationPreviewError
+                              : null,
+                          ]}
+                        >
+                          {shiftDurationPreview}
+                        </Text>
+                      ) : null}
                     </>
                   ) : null}
 
-                  <View style={styles.shiftEditorActions}>
+                  {Platform.OS === 'ios' && activeShiftPicker && activeShiftPickerValue ? (
+                    <View style={styles.pickerPanel}>
+                      <View style={styles.pickerPanelHeader}>
+                        <Text style={styles.pickerPanelTitle}>
+                          {activeShiftPicker.target === 'clockIn' ? 'Clock In' : 'Clock Out'}{' '}
+                          {activeShiftPicker.mode === 'date' ? 'Date' : 'Time'}
+                        </Text>
+                        <Pressable
+                          onPress={() => {
+                            markActivity();
+                            setActiveShiftPicker(null);
+                          }}
+                          style={styles.quickAdjustButton}
+                        >
+                          <Text style={styles.quickAdjustText}>Done</Text>
+                        </Pressable>
+                      </View>
+                      <DateTimePicker
+                        display={activeShiftPicker.mode === 'date' ? 'inline' : 'spinner'}
+                        mode={activeShiftPicker.mode}
+                        onChange={handleIosShiftPickerChange}
+                        themeVariant="light"
+                        value={activeShiftPickerValue}
+                      />
+                    </View>
+                  ) : null}
+
+                  <View
+                    style={[
+                      styles.shiftEditorActions,
+                      isVeryCompactWidth ? styles.shiftEditorActionsStacked : null,
+                    ]}
+                  >
                     <PrimaryButton
                       disabled={isSavingShiftAction}
+                      fullWidth={isVeryCompactWidth}
                       onPress={() => {
                         void saveShiftForm();
                       }}
@@ -937,6 +1338,7 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                       variant="success"
                     />
                     <PrimaryButton
+                      fullWidth={isVeryCompactWidth}
                       onPress={closeForm}
                       title="Cancel"
                       variant="neutral"
@@ -1080,8 +1482,7 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
 
         {actionMessage ? <Text style={styles.successText}>{actionMessage}</Text> : null}
         {!isLoading && error ? <Text style={styles.errorText}>{error}</Text> : null}
-      </ScrollView>
-    </AdminScreenContainer>
+    </AdminScrollContainer>
   );
 }
 
@@ -1138,7 +1539,6 @@ const styles = StyleSheet.create({
   },
   content: {
     gap: spacing.sm,
-    paddingBottom: spacing.lg,
   },
   dualCard: {
     backgroundColor: colors.surface,
@@ -1362,6 +1762,52 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textTransform: 'uppercase',
   },
+  fieldPreview: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+  },
+  dateTimeFieldButton: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 140,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  dateTimeFieldButtonActive: {
+    backgroundColor: '#E7EDF5',
+    borderColor: colors.primary,
+  },
+  dateTimeFieldLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  dateTimeFieldValue: {
+    ...typography.body,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+  },
+  dateTimeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  dateTimeRowCompact: {
+    flexDirection: 'column',
+  },
+  durationPreview: {
+    ...typography.label,
+    color: colors.success,
+    marginTop: spacing.sm,
+  },
+  durationPreviewError: {
+    color: colors.danger,
+  },
   input: {
     ...typography.body,
     backgroundColor: colors.white,
@@ -1372,6 +1818,44 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
+  },
+  pickerPanel: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: spacing.md,
+    overflow: 'hidden',
+    padding: spacing.sm,
+  },
+  pickerPanelHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  pickerPanelTitle: {
+    ...typography.label,
+    color: colors.textPrimary,
+  },
+  quickAdjustButton: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  quickAdjustRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  quickAdjustText: {
+    ...typography.caption,
+    color: colors.primary,
+    textTransform: 'uppercase',
   },
   shiftCompactRow: {
     alignItems: 'center',
@@ -1387,6 +1871,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.sm,
     marginTop: spacing.md,
+  },
+  shiftEditorActionsStacked: {
+    flexDirection: 'column',
   },
   shiftEditorCard: {
     backgroundColor: '#EEF2F6',

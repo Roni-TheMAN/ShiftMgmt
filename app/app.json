@@ -2,11 +2,11 @@
   "expo": {
     "name": "ShiftMgmt",
     "slug": "ShiftMgmt",
+    "softwareKeyboardLayoutMode": "resize",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -14,29 +14,30 @@
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.ronit06.ShiftMgmt",
       "infoPlist": {
-        "NSCameraUsageDescription": "This kiosk takes a clock photo for each time entry."
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "expo-sqlite",
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow this kiosk to take an attendance photo for each clock event."
-        }
-      ]
-    ]
+    "extra": {
+      "eas": {
+        "projectId": "edd0cc65-ddcb-49ce-b623-6e17fe20f0fc"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/edd0cc65-ddcb-49ce-b623-6e17fe20f0fc"
+    }
   }
 }

@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
-import AdminScreenContainer from '../../components/AdminScreenContainer';
+import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
@@ -69,7 +69,7 @@ export default function DangerZoneScreen({ navigation }: DangerZoneScreenProps) 
   };
 
   return (
-    <AdminScreenContainer>
+    <AdminScrollContainer>
       <Text style={styles.title}>Danger Zone</Text>
       <Text style={styles.subtitle}>
         Delete all operational data on this kiosk. This cannot be undone.
@@ -120,7 +120,7 @@ export default function DangerZoneScreen({ navigation }: DangerZoneScreenProps) 
           />
         </View>
       </View>
-    </AdminScreenContainer>
+    </AdminScrollContainer>
   );
 }
 

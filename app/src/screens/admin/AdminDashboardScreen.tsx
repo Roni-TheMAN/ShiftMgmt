@@ -117,7 +117,7 @@ export default function AdminDashboardScreen({
             ) : (
               <Text style={styles.summaryValue}>Ready</Text>
             )}
-            <Text style={styles.summaryHint}>Offline local mode</Text>
+            <Text style={styles.summaryHint}>Kiosk ready</Text>
           </View>
         </View>
 

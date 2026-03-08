@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
-import AdminScreenContainer from '../../components/AdminScreenContainer';
+import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
@@ -67,7 +67,7 @@ export default function ChangeAdminPinScreen({
   };
 
   return (
-    <AdminScreenContainer>
+    <AdminScrollContainer>
       <Text style={styles.title}>Change Admin PIN</Text>
       <Text style={styles.subtitle}>Use a secure 4-digit admin PIN.</Text>
 
@@ -149,7 +149,7 @@ export default function ChangeAdminPinScreen({
           />
         </View>
       </View>
-    </AdminScreenContainer>
+    </AdminScrollContainer>
   );
 }
 

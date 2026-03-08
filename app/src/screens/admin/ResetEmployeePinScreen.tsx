@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
-import AdminScreenContainer from '../../components/AdminScreenContainer';
+import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
@@ -71,7 +71,7 @@ export default function ResetEmployeePinScreen({
   };
 
   return (
-    <AdminScreenContainer>
+    <AdminScrollContainer>
       <Text style={styles.title}>Reset Employee PIN</Text>
       <Text style={styles.subtitle}>{employeeName}</Text>
 
@@ -182,7 +182,7 @@ export default function ResetEmployeePinScreen({
           />
         </View>
       </View>
-    </AdminScreenContainer>
+    </AdminScrollContainer>
   );
 }
 

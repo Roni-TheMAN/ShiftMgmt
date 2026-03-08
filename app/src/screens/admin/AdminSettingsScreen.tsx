@@ -4,13 +4,13 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import AdminScreenContainer from '../../components/AdminScreenContainer';
+import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
@@ -339,14 +339,13 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
   }
 
   return (
-    <AdminScreenContainer>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>Settings</Text>
-        <Text style={styles.subtitle}>
-          Configure payroll schedule and period boundaries for reporting.
-        </Text>
+    <AdminScrollContainer>
+      <Text style={styles.title}>Settings</Text>
+      <Text style={styles.subtitle}>
+        Configure payroll schedule and period boundaries for reporting.
+      </Text>
 
-        <View style={styles.card}>
+      <View style={styles.card}>
           <Text style={styles.sectionLabel}>Pay Period Length</Text>
           <View style={styles.optionsGrid}>
             {PAY_PERIOD_LENGTHS.map((option) => (
@@ -736,9 +735,8 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
               variant="neutral"
             />
           </View>
-        </View>
-      </ScrollView>
-    </AdminScreenContainer>
+      </View>
+    </AdminScrollContainer>
   );
 }
 
@@ -939,9 +937,6 @@ const styles = StyleSheet.create({
   previewValue: {
     color: colors.textPrimary,
     fontWeight: '700',
-  },
-  scrollContent: {
-    paddingBottom: spacing.lg,
   },
   sectionLabel: {
     ...typography.h2,
