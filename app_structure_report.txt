@@ -1,0 +1,917 @@
+ShiftMgmt App Structure Report
+Generated from source inspection on 2026-03-09
+
+Overview
+
+- The active application is the Expo/React Native app under the "app" folder.
+- The "server" folder exists, but "server/src" is empty, so there is no active backend implementation in this repo right now.
+- The app is local-first. It uses SQLite for employees, clock events, and settings, and stores captured photos in the device document directory.
+- App startup initializes the database, ensures the default admin PIN exists, ensures the photo directory exists, and then mounts the app navigator.
+
+Top-Level Structure
+
+- app
+  - Expo/React Native frontend
+  - Screens, navigation, local database, payroll logic, export logic
+- server
+  - Present but effectively unused in current code
+
+Core App Architecture
+
+- Entry point: app/App.tsx
+- Navigation: app/src/navigation/RootNavigator.tsx
+- Database: app/src/services/db/database.ts
+- Database migrations: app/src/services/db/migrations.ts
+- Employee repository: app/src/services/repositories/employeeRepository.ts
+- Clock event repository: app/src/services/repositories/clockEventRepository.ts
+- Settings repository: app/src/services/repositories/settingsRepository.ts
+- Payroll calculation: app/src/services/payroll/hoursAggregation.ts
+- Pay period calculation: app/src/services/payroll/payPeriod.ts
+- Photo storage: app/src/services/camera/photoStorage.ts
+- Auto clock-out: app/src/services/clock/autoClockOutService.ts
+- CSV export: app/src/services/export/csvExport.ts
+- PDF payroll export: app/src/services/export/payrollReportExport.ts
+
+Database Structure
+
+SQLite tables are created and evolved in migrations:
+
+- employees
+  - basic identity
+  - active/inactive flag
+  - hashed PIN
+  - plaintext PIN code column also exists
+  - payroll/contact fields such as job title, hourly rate, department, start date, email, address, phone, and optional photo path
+- clock_events
+  - employee id
+  - IN or OUT type
+  - timestamp
+  - photo path
+  - source (MANUAL or AUTO)
+  - admin tag (NONE, CREATED, EDITED)
+  - last edited timestamp
+- settings
+  - key/value table used for admin PIN, payroll config, property info, auto clock-out settings, and overtime settings
+
+Navigation Structure
+
+Routes in the main stack:
+
+- Home
+- CameraCapture
+- Confirmation
+- AdminAuth
+- AdminDashboard
+- AdminEmployees
+- AdminEmployeeForm
+- AdminResetEmployeePin
+- AdminLogs
+- AdminSettings
+- AdminPayrollHours
+- AdminChangePin
+- AdminDangerZone
+
+Important navigation behavior:
+
+- Initial route is Home.
+- Admin routes are only registered after admin authentication succeeds.
+- Admin logout resets navigation back to Home.
+
+Session and Timing Rules
+
+- Default admin PIN: 0000
+- Admin PIN length: 4 digits
+- Employee PIN length: 4 digits
+- Admin session timeout: 2 minutes of inactivity
+- Confirmation screen auto-return: 5 seconds
+- Auto clock-out sweep interval on Home: every 60 seconds
+
+Screen-by-Screen Report
+
+1. Home Screen
+File: app/src/screens/HomeScreen.tsx
+
+Purpose:
+- Main kiosk screen for staff to clock in and clock out.
+
+Visible UI:
+- Page header with app name
+- Camera status badge
+- Current date/time row
+- Property name display
+- Hidden admin hold-progress bar
+- PIN entry area with PIN dots
+- Error message area
+- Numeric keypad
+- Inline live front-camera preview
+- Two action buttons:
+  - Clock In
+  - Clock Out
+
+Functionality:
+- Loads property name from settings.
+- Requests camera permission if not already available.
+- Shows live camera preview when focused.
+- Runs auto clock-out sweep on focus and then every minute.
+- Accepts a 4-digit employee PIN through the keypad.
+- Validates the employee PIN against active employees only.
+- Enforces shift transition rules:
+  - employee cannot clock in twice in a row
+  - employee cannot clock out unless currently clocked in
+- On valid action, navigates to Camera Capture with employee id, name, and event type.
+
+Buttons and interactions:
+- Numeric keypad digits:
+  - append digits up to 4 digits
+- CLR:
+  - clears the PIN
+- DEL:
+  - removes the last digit
+- Clock In:
+  - enabled only when 4 digits are entered and not already processing
+  - validates PIN and shift state
+  - routes to camera capture
+- Clock Out:
+  - same validation flow as Clock In
+- Time row:
+  - hidden admin entry point
+  - user must hold for 3 seconds
+  - while holding, progress bar fills and countdown text is shown
+  - on completion, app vibrates briefly, clears PIN/error, and opens Admin Access
+
+Popups/modals:
+- No custom modal
+- No native alert on this screen
+
+Calendar/time controls:
+- Displays current time
+- No editable calendar picker here
+
+2. Camera Capture Screen
+File: app/src/screens/CameraCaptureScreen.tsx
+
+Purpose:
+- Captures the employee's photo for the clock event.
+
+Visible UI:
+- Header with event type and employee name
+- Back behavior returns to Home
+- Large front-camera preview card
+- Status chip showing Booting, Live, Saving, or Error
+- Footer status text
+- Buttons depending on state:
+  - Try Again
+  - Retry Capture
+  - Cancel
+
+Functionality:
+- Requests camera permission if needed.
+- If permission is denied, shows a permission-required card instead of preview.
+- Once camera is ready, schedules an automatic capture after about 700 ms.
+- Captures a photo using the front camera.
+- Saves the photo into the app photo directory.
+- Creates a clock event record in SQLite.
+- Replaces current screen with Confirmation on success.
+
+Buttons and interactions:
+- Try Again:
+  - re-requests camera permission
+- Retry Capture:
+  - retries failed capture/save flow
+- Cancel:
+  - resets navigation back to Home
+
+Popups/modals:
+- No custom modal
+- No native alert
+
+Calendar/time controls:
+- No picker
+- Timestamp is generated automatically when event is saved
+
+3. Confirmation Screen
+File: app/src/screens/ConfirmationScreen.tsx
+
+Purpose:
+- Confirms that the clock event was saved.
+
+Visible UI:
+- Header with IN/OUT badge and success message
+- Employee name
+- Completed status chip
+- Saved timestamp
+- Countdown text
+- Done button
+
+Functionality:
+- Automatically resets navigation to Home after 5 seconds.
+- Also lets the user return immediately by tapping Done.
+
+Buttons and interactions:
+- Done:
+  - resets stack back to Home immediately
+
+Popups/modals:
+- None
+
+Calendar/time controls:
+- None
+- Read-only formatted timestamp only
+
+4. Admin Access Screen
+File: app/src/screens/admin/AdminAuthScreen.tsx
+
+Purpose:
+- Authenticates admin access with a 4-digit admin PIN.
+
+Visible UI:
+- Header with back button
+- Title and subtitle describing admin access
+- PIN dots
+- Numeric keypad
+- Error message area
+- Buttons:
+  - Enter Admin
+  - Cancel
+
+Functionality:
+- Verifies admin PIN through settings repository.
+- If already authenticated, resets directly to Admin Dashboard.
+- On invalid PIN, clears field and shows error.
+- On success, starts admin session and enters dashboard.
+
+Buttons and interactions:
+- Numeric keypad:
+  - same pattern as Home keypad
+- Enter Admin:
+  - enabled only at 4 digits and when not submitting
+- Cancel / back:
+  - resets navigation back to Home
+
+Popups/modals:
+- None
+
+Calendar/time controls:
+- None
+
+5. Admin Dashboard
+File: app/src/screens/admin/AdminDashboardScreen.tsx
+
+Purpose:
+- Main admin control center.
+
+Visible UI:
+- Header with actions:
+  - Export CSV
+  - Admin Logout
+- Summary cards:
+  - Active Employees
+  - Clock Events
+  - System Status
+- Quick Action tiles:
+  - Manage Employees
+  - View Clock Logs
+  - Payroll Hours
+  - Settings
+  - Change Admin PIN
+  - Delete All Data
+- Feedback/notice card area
+
+Functionality:
+- Loads employee count and event count on focus.
+- Exports all clock events to CSV and opens the share sheet if available.
+- Logs out the admin session on demand.
+
+Buttons and interactions:
+- Export CSV:
+  - builds a CSV from all clock events
+  - stores it in a writable directory
+  - opens platform share sheet if supported
+- Admin Logout:
+  - clears session and returns to Home
+- Quick action tiles:
+  - each navigates to its corresponding admin screen
+
+Popups/modals:
+- No modal
+- Share sheet can appear for CSV export
+
+Calendar/time controls:
+- None
+
+6. Employees Screen
+File: app/src/screens/admin/EmployeeListScreen.tsx
+
+Purpose:
+- View all employees and manage status or PIN.
+
+Visible UI:
+- Header actions:
+  - Show PINs / Hide PINs
+  - Add Employee
+- One card per employee showing:
+  - initials badge
+  - employee name
+  - Active or Inactive chip
+  - PIN value or masked dots
+- Per-employee action buttons:
+  - Edit
+  - Activate or Deactivate
+  - Reset PIN
+
+Functionality:
+- Loads all employees ordered by name.
+- Toggles active state in database.
+- Navigates to add/edit employee form.
+- Navigates to reset employee PIN screen.
+
+Buttons and interactions:
+- Show PINs / Hide PINs:
+  - toggles plaintext display of employee PINs
+- Add Employee:
+  - opens employee creation form
+- Edit:
+  - opens employee edit form
+- Activate / Deactivate:
+  - toggles active flag
+- Reset PIN:
+  - opens reset PIN flow for that employee
+
+Popups/modals:
+- None
+
+Calendar/time controls:
+- None
+
+7. Add/Edit Employee Screen
+File: app/src/screens/admin/EmployeeFormScreen.tsx
+
+Purpose:
+- Create a new employee or edit an existing employee profile.
+
+Visible UI sections:
+- Employment Details
+  - Name
+  - Job Title
+  - Department
+  - Phone Number
+  - Hourly Rate
+  - Start Date (YYYY-MM-DD)
+- Contact and Optional Details
+  - Email
+  - Address
+  - Picture URL/Path
+- Save section
+  - helper text in create mode explaining random PIN generation
+  - Save Employee
+  - Cancel
+
+Functionality:
+- In edit mode, loads the existing employee first.
+- Validates required fields:
+  - name
+  - job title
+  - department
+  - phone number
+  - hourly rate > 0
+  - valid ISO date for start date
+- In create mode:
+  - generates a random unique 4-digit PIN
+  - stores employee
+  - shows assigned PIN in a native alert
+- In edit mode:
+  - updates the employee and returns immediately
+
+Buttons and interactions:
+- Save Employee:
+  - validates and saves
+- Cancel:
+  - returns without saving
+
+Popups/modals:
+- Native alert after successful creation:
+  - shows employee name
+  - shows assigned PIN
+
+Calendar/time controls:
+- No calendar picker
+- Start date is typed manually as YYYY-MM-DD
+
+8. Reset Employee PIN Screen
+File: app/src/screens/admin/ResetEmployeePinScreen.tsx
+
+Purpose:
+- Reset an employee PIN either randomly or manually.
+
+Visible UI:
+- Header with employee name
+- Mode buttons:
+  - Random PIN
+  - Set Manually
+- Manual fields when manual mode is selected:
+  - New PIN
+  - Confirm New PIN
+- Action buttons:
+  - Generate PIN or Save PIN
+  - Cancel
+
+Functionality:
+- Random mode creates a new unique 4-digit PIN.
+- Manual mode validates length and confirmation match.
+- Successful save shows the resulting PIN in a native alert.
+
+Buttons and interactions:
+- Random PIN:
+  - clears manual fields and selects auto-generated mode
+- Set Manually:
+  - enables the PIN entry fields
+- Generate PIN / Save PIN:
+  - saves depending on selected mode
+- Cancel:
+  - returns without saving
+
+Popups/modals:
+- Native alert on success showing the new PIN
+
+Calendar/time controls:
+- None
+
+9. Clock Event Logs Screen
+File: app/src/screens/admin/LogsScreen.tsx
+
+Purpose:
+- Review recent clock activity with thumbnails and metadata.
+
+Visible UI:
+- Header with Refresh button
+- Flat list of event cards
+- Each event row shows:
+  - thumbnail
+  - employee name
+  - IN/OUT chip
+  - event label
+  - timestamp
+  - edit metadata if admin-created or admin-edited
+
+Special thumbnail behavior:
+- Real photo thumbnail when a normal captured image exists
+- "AUTO" block when photo_path is the auto clock-out marker
+- "ADMIN" block when photo_path is the admin-manual-event marker
+
+Functionality:
+- Loads up to 400 recent clock events joined with employee names.
+- Distinguishes manual vs auto events.
+- Shows edit tag and last edited time for admin-touched events.
+
+Buttons and interactions:
+- Refresh:
+  - reloads the logs
+
+Popups/modals:
+- None
+
+Calendar/time controls:
+- None
+
+10. Settings Screen
+File: app/src/screens/admin/AdminSettingsScreen.tsx
+
+Purpose:
+- Configure property info, payroll rules, pay-period setup, and auto clock-out.
+
+Visible UI sections:
+
+- Header
+  - View Payroll Hours
+  - Back
+
+- Property section
+  - Property Name
+  - Property Address
+  - Additional Property Details
+
+- Pay period section
+  - Pay Period Length buttons:
+    - Weekly
+    - Biweekly
+    - Monthly
+    - Quarterly
+    - Semiannual
+    - Yearly
+  - Week Start Day buttons:
+    - Sunday through Saturday
+  - Pay Period Start Date
+    - Selected Date display
+    - compact custom calendar dropdown
+    - month navigation with < and >
+    - date selection grid
+    - quick buttons:
+      - Use Last <selected weekday>
+      - Use Today
+  - First Payroll Run Days
+    - optional
+    - only shown for weekly and biweekly schedules
+
+- Overtime section
+  - OT1 Threshold display (fixed at 40 hours/week)
+  - OT1 Multiplier
+  - OT2 Multiplier
+  - OT2 Holiday Dates multiline field
+
+- Auto Clock-Out section
+  - Enabled
+  - Disabled
+  - Auto clock-out hours input
+
+- Current Period Preview section
+  - Start date
+  - End date
+  - Next start date
+  - Days in period
+  - whether today is inside the period
+
+- Bottom actions
+  - Save Settings
+  - Back
+
+Functionality:
+- Loads payroll settings and property settings together.
+- Validates:
+  - auto clock-out hours > 0 and <= 24
+  - OT1 multiplier between 1 and 5
+  - OT2 multiplier between 1 and 5
+  - holiday dates are valid ISO dates
+  - holiday date count <= 366
+  - first payroll run days is a positive whole number and within the period maximum
+- Saves payroll settings and property settings in parallel.
+
+Buttons and interactions:
+- View Payroll Hours:
+  - opens Payroll Hours screen
+- Pay Period Length buttons:
+  - change schedule type
+  - weekly/biweekly can use first-run override
+- Week Start Day buttons:
+  - change selected weekday anchor
+- Selected Date trigger:
+  - opens or closes compact calendar dropdown
+- Calendar day cells:
+  - choose the pay period start date
+- Use Last <weekday>:
+  - sets anchor date to the most recent chosen week-start day
+- Use Today:
+  - sets anchor date to today
+- Enabled / Disabled:
+  - toggles auto clock-out
+- Save Settings:
+  - validates and persists changes
+- Back:
+  - returns to previous screen
+
+Popups/modals:
+- No native alert
+- No custom modal
+- Uses an inline custom dropdown calendar panel
+
+Calendar/time controls:
+- This is the main screen with a custom calendar control
+- No native OS date picker here
+
+11. Payroll Hours Screen
+File: app/src/screens/admin/PayrollHoursScreen.tsx
+
+Purpose:
+- Review payroll totals for a pay period and perform manual shift corrections.
+
+Visible UI sections:
+
+- Header
+  - Report
+  - Refresh
+  - Back
+
+- Pay period summary card
+  - current period label such as Current Period or 1 Period Back
+  - visible date range
+  - schedule metadata
+  - first-run override info
+  - overtime config summary
+  - period navigation buttons:
+    - Older
+    - Newer
+    - Current
+  - quick history chips:
+    - Now
+    - -1
+    - -2
+    - -3
+    - -4
+
+- Metrics cards
+  - Total Hours
+  - Total Payroll
+  - Shifts
+  - Employees
+  - Avg / Day
+
+- Week Totals card
+- Day Totals card
+  - can toggle between last 14 days and all days
+
+- Employee Totals card
+  - one row per employee
+  - tapping an employee filters the shift logs to that employee
+
+- Shift Editor card (only when active)
+  - mode title:
+    - Add Shift
+    - Close / Edit Open Shift
+    - Edit Shift
+  - employee selection chips in add mode
+  - Clock In controls
+  - toggle:
+    - With Clock Out
+    - Open Shift
+  - Clock Out controls when included
+  - inline duration preview
+  - Save Shift
+  - Cancel
+
+- Shift Logs section
+  - Add Shift
+  - Show All / Show Selected
+  - Clear
+  - per employee grouped shifts
+  - each shift shows:
+    - status badge
+    - shift time window
+    - AUTO OUT tag if auto-closed
+    - CREATED or EDITED tag if admin touched
+    - edit timestamp
+    - duration
+    - Edit / Close/Edit button when supported
+    - Delete button when supported
+
+- Data Warnings card
+  - open shifts
+  - unmatched outs
+  - duplicate/consecutive sequence problems
+
+Functionality:
+- Loads payroll settings and employee list.
+- Computes pay period using history offset.
+- Loads clock events in range.
+- Pulls forward matching clock-outs that happen after the range for open shift calculations.
+- Builds payroll summary with:
+  - regular hours
+  - OT1 hours
+  - OT2 hours
+  - day totals
+  - week totals
+  - employee totals
+  - period pay totals
+  - warnings
+- Supports manual shift creation, editing, closing open shifts, and deleting shifts.
+- Exports PDF payroll report through the OS share sheet.
+
+Buttons and interactions:
+- Report:
+  - exports the current pay period to PDF
+- Refresh:
+  - recalculates the payroll screen
+- Older:
+  - go further back in pay-period history
+- Newer:
+  - move toward the current period
+- Current:
+  - jump back to current period
+- Quick history chips:
+  - instant period jump for 0-4 periods back
+- Employee total row:
+  - selects or clears employee focus for shift log filtering
+- Add Shift:
+  - opens shift editor with a default 8-hour window ending now
+- Show All / Show Selected:
+  - toggles all employees vs selected employee only
+- Clear:
+  - clears employee selection
+- Edit / Close/Edit:
+  - opens existing shift in the editor
+- Delete:
+  - opens a native confirmation alert before deletion
+- Save Shift:
+  - creates or updates the shift
+- Cancel:
+  - closes the editor without saving
+
+Date and time controls on this screen:
+
+- This is the main screen with native date/time editing.
+- On Android:
+  - uses DateTimePickerAndroid
+  - date fields open calendar picker
+  - time fields open clock picker
+- On iOS:
+  - opens an inline DateTimePicker panel
+  - date mode uses inline display
+  - time mode uses spinner display
+  - Done closes the picker panel
+- On other platforms:
+  - falls back to manual text input in local "YYYY-MM-DD HH:mm" style
+- Quick buttons inside shift editor:
+  - Now for Clock In
+  - Now for Clock Out
+  - +8h for Clock Out
+
+Popups/modals:
+- Native alert for Delete Shift confirmation
+- OS share sheet for payroll report PDF
+- Inline iOS date/time picker panel
+- Android native date and time picker dialogs
+
+12. Change Admin PIN Screen
+File: app/src/screens/admin/ChangeAdminPinScreen.tsx
+
+Purpose:
+- Update the admin access PIN.
+
+Visible UI:
+- Current PIN
+- New PIN
+- Confirm New PIN
+- Save PIN
+- Back
+- Inline error and success messages
+
+Functionality:
+- Validates all PINs as 4 digits.
+- Validates confirmation match.
+- Verifies current admin PIN.
+- Updates stored hash on success.
+
+Buttons and interactions:
+- Save PIN:
+  - validates and saves
+- Back:
+  - returns without changes
+
+Popups/modals:
+- None
+
+Calendar/time controls:
+- None
+
+13. Danger Zone Screen
+File: app/src/screens/admin/DangerZoneScreen.tsx
+
+Purpose:
+- Destructive local reset for kiosk operational data.
+
+Visible UI:
+- Warning text
+- Confirmation field requiring DELETE
+- Delete All Data button
+- Back button
+- Inline success or error text
+
+Functionality:
+- Button remains disabled until exact text DELETE is entered.
+- On trigger, opens native destructive confirmation alert.
+- On confirmed delete:
+  - deletes employees
+  - deletes clock events
+  - resets autoincrement sequences
+  - deletes saved photos
+  - resets admin PIN to default 0000
+
+Buttons and interactions:
+- Delete All Data:
+  - enabled only when field equals DELETE
+  - opens native confirmation alert
+- Back:
+  - returns without changes
+
+Popups/modals:
+- Native alert:
+  - title: Delete All Data
+  - message explains permanent deletion
+  - buttons: Cancel, Delete
+
+Calendar/time controls:
+- None
+
+Shared UI Components
+
+- PageHeader
+  - reusable title, subtitle, badge, back button, and action-row header
+- PrimaryButton
+  - main action button component
+  - variants: primary, success, danger, neutral
+- NumericKeypad
+  - 0-9 keypad with CLR and DEL
+- PinDots
+  - visual PIN entry indicator
+- TextField
+  - labeled text input wrapper
+- ScreenContainer
+  - shared background and safe-area shell
+- AdminScreenContainer / AdminScrollContainer
+  - admin layout wrappers
+  - also mark admin activity on touch to keep the session alive
+
+Calendars, Time Pickers, Alerts, and Popups Summary
+
+Custom calendar:
+- Settings screen
+  - compact inline dropdown calendar for pay period start date
+
+Native date/time pickers:
+- Payroll Hours screen only
+  - Android uses native dialogs
+  - iOS uses inline DateTimePicker panel
+
+Manual typed date inputs:
+- Employee start date on Add/Edit Employee
+- Shift date/time fallback on non-mobile platforms
+
+Native alerts:
+- Employee created -> shows assigned PIN
+- Employee PIN reset -> shows new PIN
+- Delete Shift -> confirmation
+- Delete All Data -> confirmation
+
+Share sheets:
+- CSV export from Admin Dashboard
+- PDF payroll report export from Payroll Hours
+
+Auto Clock-Out Behavior
+
+File: app/src/services/clock/autoClockOutService.ts
+
+- Controlled by settings:
+  - autoClockOutEnabled
+  - autoClockOutHours
+- Home screen runs the sweep on focus and every 60 seconds.
+- If an employee is still clocked in beyond threshold, the app creates an OUT event automatically.
+- These events use a marker photo path instead of a real photo.
+- Logs screen shows these rows with an AUTO marker thumbnail.
+
+Security Notes
+
+- PIN verification uses PBKDF2-SHA256 with 10,000 iterations.
+- Admin PIN is stored hashed in settings.
+- Employee PINs are hashed for verification.
+- However, the employees table also stores a plaintext "pin_code" value, and the employee list can reveal it when Show PINs is enabled.
+
+Important Observations and Gaps
+
+1. Property settings mismatch
+- The Settings screen stores propertyName, propertyAddress, and propertyDetails.
+- The Home screen currently reads and displays only propertyName.
+- Property address and property details appear unused in the visible UI.
+
+2. Danger Zone is not truly "all settings"
+- The delete flow removes employees and clock events, deletes photos, and resets the admin PIN.
+- It does not clear payroll settings or property settings from the settings table.
+
+3. No backend
+- All operational behavior is local on the device.
+- There is no active server-side syncing, auth service, or reporting API in this repo.
+
+4. No image detail popup in logs
+- The logs screen shows thumbnails/markers only.
+- There is no full-screen image viewer or event detail modal.
+
+5. No automated test suite in app source
+- I did not find project tests outside dependency folders.
+
+Summary
+
+This app is a local kiosk-based shift clock system with:
+
+- employee PIN-based clock in/out
+- mandatory photo capture for standard manual punches
+- admin-protected controls
+- employee management
+- log review
+- configurable payroll periods and overtime rules
+- manual payroll corrections with date/time pickers
+- CSV export for raw logs
+- PDF export for payroll period reports
+- automatic clock-out support
+
+The main operational screens are:
+
+- Home
+- Camera Capture
+- Confirmation
+- Admin Access
+- Admin Dashboard
+- Employees
+- Add/Edit Employee
+- Reset Employee PIN
+- Clock Event Logs
+- Settings
+- Payroll Hours
+- Change Admin PIN
+- Danger Zone

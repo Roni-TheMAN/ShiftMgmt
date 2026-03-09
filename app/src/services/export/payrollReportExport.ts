@@ -9,6 +9,10 @@ type PayrollReportSchedule = {
   payPeriodStartDate: string;
   payPeriodStartDay: string;
   firstPayrollRunDays: number | null;
+  ot1WeeklyThresholdHours: number;
+  ot1Multiplier: number;
+  ot2Multiplier: number;
+  ot2HolidayDates: string[];
 };
 
 type PayrollReportPeriod = {
@@ -49,23 +53,68 @@ function formatCurrency(value: number) {
   return `$${value.toFixed(2)}`;
 }
 
-function formatDay(dayKey: string) {
-  return new Date(`${dayKey}T00:00:00`).toLocaleDateString(undefined, {
+function formatWeekdayShort(date: Date) {
+  return date.toLocaleDateString(undefined, {
+    weekday: 'short',
+  });
+}
+
+function formatCalendarDate(date: Date) {
+  return date.toLocaleDateString(undefined, {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
 }
 
-function formatDateOnly(isoTimestamp: string | null) {
+function formatDateWithWeekday(date: Date) {
+  return `${formatCalendarDate(date)} (${formatWeekdayShort(date)})`;
+}
+
+function getTotalWeeksInPayPeriod(payPeriod: PayrollReportPeriod) {
+  const periodStartEpoch = dayKeyToUtcEpoch(payPeriod.periodStartDate);
+  const periodEndEpoch = dayKeyToUtcEpoch(payPeriod.periodEndDate);
+  return Math.floor((periodEndEpoch - periodStartEpoch) / DAY_MS / 7) + 1;
+}
+
+function getPayPeriodWeekNumber(dayKey: string, payPeriod: PayrollReportPeriod) {
+  const periodStartEpoch = dayKeyToUtcEpoch(payPeriod.periodStartDate);
+  const dayEpoch = dayKeyToUtcEpoch(dayKey);
+  const dayOffset = Math.floor((dayEpoch - periodStartEpoch) / DAY_MS);
+  const rawWeekNumber = dayOffset < 0 ? 1 : Math.floor(dayOffset / 7) + 1;
+  return Math.min(Math.max(rawWeekNumber, 1), getTotalWeeksInPayPeriod(payPeriod));
+}
+
+function formatPayPeriodWeekLabel(dayKey: string, payPeriod: PayrollReportPeriod) {
+  return `W${getPayPeriodWeekNumber(dayKey, payPeriod)}`;
+}
+
+function formatDateWithPayPeriodWeek(date: Date, payPeriod: PayrollReportPeriod) {
+  return `${formatDateWithWeekday(date)} - ${formatPayPeriodWeekLabel(
+    toLocalDayKey(date),
+    payPeriod,
+  )}`;
+}
+
+function formatDay(dayKey: string, payPeriod?: PayrollReportPeriod) {
+  const date = new Date(`${dayKey}T00:00:00`);
+  return payPeriod
+    ? formatDateWithPayPeriodWeek(date, payPeriod)
+    : formatDateWithWeekday(date);
+}
+
+function formatDateOnly(
+  isoTimestamp: string | null,
+  payPeriod?: PayrollReportPeriod,
+) {
   if (!isoTimestamp) {
     return '-';
   }
-  return new Date(isoTimestamp).toLocaleDateString(undefined, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
+
+  const date = new Date(isoTimestamp);
+  return payPeriod
+    ? formatDateWithPayPeriodWeek(date, payPeriod)
+    : formatDateWithWeekday(date);
 }
 
 function formatTimeOnly(isoTimestamp: string | null) {
@@ -76,6 +125,81 @@ function formatTimeOnly(isoTimestamp: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function getPunchDisplayContext(
+  isoTimestamp: string,
+  payPeriod: PayrollReportPeriod,
+) {
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const dayKey = toLocalDayKey(date);
+  return {
+    dayKey,
+    weekday: formatWeekdayShort(date),
+    weekLabel: formatPayPeriodWeekLabel(dayKey, payPeriod),
+  };
+}
+
+function formatClockInTime(
+  clockInTimestamp: string | null,
+  clockOutTimestamp: string | null,
+  payPeriod: PayrollReportPeriod,
+) {
+  if (!clockInTimestamp) {
+    return '-';
+  }
+
+  const formattedInTime = formatTimeOnly(clockInTimestamp);
+  if (!clockOutTimestamp) {
+    return formattedInTime;
+  }
+
+  const inContext = getPunchDisplayContext(clockInTimestamp, payPeriod);
+  const outContext = getPunchDisplayContext(clockOutTimestamp, payPeriod);
+  if (!inContext || !outContext) {
+    return formattedInTime;
+  }
+
+  if (inContext.weekLabel === outContext.weekLabel) {
+    return formattedInTime;
+  }
+
+  return `${formattedInTime} (${inContext.weekday} - ${inContext.weekLabel})`;
+}
+
+function formatClockOutTime(
+  clockInTimestamp: string | null,
+  clockOutTimestamp: string | null,
+  payPeriod: PayrollReportPeriod,
+) {
+  if (!clockOutTimestamp) {
+    return '-';
+  }
+
+  const formattedOutTime = formatTimeOnly(clockOutTimestamp);
+  if (!clockInTimestamp) {
+    return formattedOutTime;
+  }
+
+  const inContext = getPunchDisplayContext(clockInTimestamp, payPeriod);
+  const outContext = getPunchDisplayContext(clockOutTimestamp, payPeriod);
+  if (!inContext || !outContext) {
+    return formattedOutTime;
+  }
+
+  if (inContext.weekLabel !== outContext.weekLabel) {
+    return `${formattedOutTime} (${outContext.weekday} - ${outContext.weekLabel})`;
+  }
+
+  if (inContext.dayKey === outContext.dayKey) {
+    return formattedOutTime;
+  }
+
+  return `${formattedOutTime} (${outContext.weekday})`;
 }
 
 function formatDateTime(isoTimestamp: string) {
@@ -267,7 +391,6 @@ function buildShiftDetailRows(
   employee: EmployeeShiftGroup,
   payPeriod: PayrollReportPeriod,
 ) {
-  const periodStartEpoch = dayKeyToUtcEpoch(payPeriod.periodStartDate);
   const runningWeekHours = new Map<number, number>();
 
   const sortedShifts = [...employee.shifts].sort((a, b) => {
@@ -282,9 +405,7 @@ function buildShiftDetailRows(
     let weeklyTotal = 0;
     if (anchorTimestamp && recordedHours > 0) {
       const anchorDayKey = toLocalDayKey(new Date(anchorTimestamp));
-      const dayOffset =
-        Math.floor((dayKeyToUtcEpoch(anchorDayKey) - periodStartEpoch) / DAY_MS);
-      const weekNumber = dayOffset < 0 ? 1 : Math.floor(dayOffset / 7) + 1;
+      const weekNumber = getPayPeriodWeekNumber(anchorDayKey, payPeriod);
       weeklyTotal = (runningWeekHours.get(weekNumber) ?? 0) + recordedHours;
       runningWeekHours.set(weekNumber, weeklyTotal);
     }
@@ -299,14 +420,14 @@ function buildShiftDetailRows(
     const punchInfo = punchInfoParts.length > 0 ? punchInfoParts.join(' | ') : '-';
 
     return `<tr>
-  <td>${escapeHtml(formatDateOnly(anchorTimestamp ?? null))}</td>
-  <td>${escapeHtml(formatTimeOnly(shift.clockInTimestamp))}</td>
-  <td>${escapeHtml(formatTimeOnly(shift.clockOutTimestamp))}</td>
+  <td>${escapeHtml(formatDateOnly(anchorTimestamp ?? null, payPeriod))}</td>
+  <td>${escapeHtml(formatClockInTime(shift.clockInTimestamp, shift.clockOutTimestamp, payPeriod))}</td>
+  <td>${escapeHtml(formatClockOutTime(shift.clockInTimestamp, shift.clockOutTimestamp, payPeriod))}</td>
   <td class="number">${formatNumber(recordedHours)}</td>
   <td class="number">${formatNumber(recordedHours)}</td>
-  <td class="number">${formatNumber(recordedHours)}</td>
-  <td class="number">0.00</td>
-  <td class="number">0.00</td>
+  <td class="number">${formatNumber(shift.regularHours)}</td>
+  <td class="number">${formatNumber(shift.ot1Hours)}</td>
+  <td class="number">${formatNumber(shift.ot2Hours)}</td>
   <td class="number">${formatNumber(weeklyTotal)}</td>
   <td><span class="status ${getStatusClass(shift.status)}">${shift.status}</span></td>
   <td>${escapeHtml(punchInfo)}</td>
@@ -345,11 +466,11 @@ function buildPayrollReportHtml(params: ExportPayrollPeriodReportParams) {
   const employeePages = params.summary.shiftsByEmployee
     .map((employee, index) => {
       const breakdown = getEmployeeBreakdown(employee, params.payPeriod);
-      const ot1Hours = 0;
-      const ot2Hours = 0;
-      const regHours = employee.totalHours;
-      const hourlyRate = 0;
-      const totalAmount = 0;
+      const ot1Hours = employee.ot1Hours;
+      const ot2Hours = employee.ot2Hours;
+      const regHours = employee.regularHours;
+      const hourlyRate = employee.hourlyRate;
+      const totalAmount = employee.totalPay;
       const employeeWarnings = params.summary.warnings.filter((warning) =>
         warning.includes(employee.employeeName),
       );
@@ -358,17 +479,17 @@ function buildPayrollReportHtml(params: ExportPayrollPeriodReportParams) {
   <td>OT1</td>
   <td>OT</td>
   <td class="number">${formatNumber(hourlyRate)}</td>
-  <td class="number">0.00</td>
+  <td class="number">${formatNumber(params.schedule.ot1Multiplier)}</td>
   <td class="number">${formatNumber(ot1Hours)}</td>
-  <td class="number">${formatCurrency(0)}</td>
+  <td class="number">${formatCurrency(employee.ot1Pay)}</td>
 </tr>
 <tr>
   <td>OT2</td>
   <td>OT</td>
   <td class="number">${formatNumber(hourlyRate)}</td>
-  <td class="number">0.00</td>
+  <td class="number">${formatNumber(params.schedule.ot2Multiplier)}</td>
   <td class="number">${formatNumber(ot2Hours)}</td>
-  <td class="number">${formatCurrency(0)}</td>
+  <td class="number">${formatCurrency(employee.ot2Pay)}</td>
 </tr>
 <tr>
   <td>REG</td>
@@ -376,11 +497,11 @@ function buildPayrollReportHtml(params: ExportPayrollPeriodReportParams) {
   <td class="number">${formatNumber(hourlyRate)}</td>
   <td class="number">1.00</td>
   <td class="number">${formatNumber(regHours)}</td>
-  <td class="number">${formatCurrency(0)}</td>
+  <td class="number">${formatCurrency(employee.regularPay)}</td>
 </tr>
 <tr class="totals-row">
   <td colspan="4"><strong>Totals</strong></td>
-  <td class="number"><strong>${formatNumber(regHours + ot1Hours + ot2Hours)}</strong></td>
+  <td class="number"><strong>${formatNumber(employee.totalHours)}</strong></td>
   <td class="number"><strong>${formatCurrency(totalAmount)}</strong></td>
 </tr>`;
 
@@ -390,7 +511,7 @@ function buildPayrollReportHtml(params: ExportPayrollPeriodReportParams) {
           : breakdown.dayTotals
               .map(
                 (day) => `<tr>
-  <td>${escapeHtml(formatDay(day.date))}</td>
+  <td>${escapeHtml(formatDay(day.date, params.payPeriod))}</td>
   <td class="number">${formatNumber(day.hours)}</td>
 </tr>`,
               )
@@ -425,6 +546,7 @@ function buildPayrollReportHtml(params: ExportPayrollPeriodReportParams) {
       <div class="meta-col">
         <p><strong>Name</strong> : ${escapeHtml(employee.employeeName)}</p>
         <p><strong>Employee ID</strong> : ${employee.employeeId}</p>
+        <p><strong>Base Hourly</strong> : ${formatCurrency(employee.hourlyRate)}</p>
         <p><strong>From</strong> : ${escapeHtml(formatPeriodBoundary(params.payPeriod.periodStartDate, false))}</p>
       </div>
       <div class="meta-col">
@@ -434,7 +556,7 @@ function buildPayrollReportHtml(params: ExportPayrollPeriodReportParams) {
       </div>
     </div>
     <p class="meta-foot">Generated: ${escapeHtml(formatDateTime(generatedAt))} | Schedule: ${escapeHtml(params.schedule.payPeriodLength)} (${escapeHtml(params.schedule.payPeriodStartDay)}) | Anchor: ${escapeHtml(params.schedule.payPeriodStartDate)}</p>
-    <p class="meta-foot">First run override: ${params.schedule.firstPayrollRunDays ? `${params.schedule.firstPayrollRunDays} day(s)` : 'None'} | Hourly rate and OT values are placeholder 0.00 for now.</p>
+    <p class="meta-foot">First run override: ${params.schedule.firstPayrollRunDays ? `${params.schedule.firstPayrollRunDays} day(s)` : 'None'} | OT1 ${params.schedule.ot1Multiplier.toFixed(2)}x above ${params.schedule.ot1WeeklyThresholdHours}h/week | OT2 ${params.schedule.ot2Multiplier.toFixed(2)}x on ${params.schedule.ot2HolidayDates.length} holiday(s).</p>
   </header>
 
   <section class="section section-compact">
@@ -510,9 +632,9 @@ function buildPayrollReportHtml(params: ExportPayrollPeriodReportParams) {
         <tr class="totals-row">
           <td colspan="4"><strong>Pay Period Totals</strong></td>
           <td class="number"><strong>${formatNumber(employee.totalHours)}</strong></td>
-          <td class="number"><strong>${formatNumber(employee.totalHours)}</strong></td>
-          <td class="number"><strong>0.00</strong></td>
-          <td class="number"><strong>0.00</strong></td>
+          <td class="number"><strong>${formatNumber(employee.regularHours)}</strong></td>
+          <td class="number"><strong>${formatNumber(employee.ot1Hours)}</strong></td>
+          <td class="number"><strong>${formatNumber(employee.ot2Hours)}</strong></td>
           <td class="number"><strong>${formatNumber(employee.totalHours)}</strong></td>
           <td colspan="2"></td>
         </tr>

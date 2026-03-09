@@ -18,10 +18,7 @@ export default function PinDots({ length, maxLength }: PinDotsProps) {
           style={[
             styles.dot,
             isVeryCompactWidth ? styles.dotCompact : null,
-            {
-              backgroundColor: index < length ? colors.primary : colors.surface,
-              borderColor: colors.border,
-            },
+            index < length ? styles.dotFilled : styles.dotEmpty,
           ]}
         />
       ))}
@@ -31,14 +28,26 @@ export default function PinDots({ length, maxLength }: PinDotsProps) {
 
 const styles = StyleSheet.create({
   dot: {
-    borderRadius: 9,
+    borderRadius: 999,
     borderWidth: 1,
-    height: 18,
-    width: 18,
+    height: 16,
+    width: 16,
   },
   dotCompact: {
-    height: 14,
-    width: 14,
+    height: 12,
+    width: 12,
+  },
+  dotEmpty: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+  },
+  dotFilled: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
   },
   row: {
     flexDirection: 'row',

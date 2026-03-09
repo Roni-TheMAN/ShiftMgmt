@@ -14,26 +14,30 @@ type PrimaryButtonProps = {
 
 const variantColors: Record<
   ButtonVariant,
-  { background: string; pressed: string; text: string }
+  { background: string; border: string; pressed: string; text: string }
 > = {
   danger: {
-    background: colors.danger,
-    pressed: '#7A3E3E',
-    text: colors.textInverse,
+    background: colors.dangerMuted,
+    border: colors.dangerMuted,
+    pressed: 'rgba(242, 90, 106, 0.26)',
+    text: colors.danger,
   },
   neutral: {
-    background: colors.surface,
-    pressed: '#D8D9D5',
+    background: colors.surfaceMuted,
+    border: colors.border,
+    pressed: colors.surfaceHighlight,
     text: colors.textPrimary,
   },
   primary: {
-    background: colors.primary,
-    pressed: colors.primaryPressed,
-    text: colors.textInverse,
+    background: colors.surfaceHighlight,
+    border: colors.borderStrong,
+    pressed: colors.surfaceMuted,
+    text: colors.textPrimary,
   },
   success: {
-    background: colors.success,
-    pressed: '#3F644B',
+    background: colors.primary,
+    border: colors.primaryPressed,
+    pressed: colors.primaryPressed,
     text: colors.textInverse,
   },
 };
@@ -60,6 +64,8 @@ export default function PrimaryButton({
             : pressed
               ? palette.pressed
               : palette.background,
+          borderColor: disabled ? colors.border : palette.border,
+          opacity: disabled ? 0.5 : 1,
         },
         fullWidth ? styles.fullWidth : undefined,
         style,
@@ -68,7 +74,7 @@ export default function PrimaryButton({
       <View style={styles.content}>
         <Text
           adjustsFontSizeToFit
-          minimumFontScale={0.75}
+          minimumFontScale={0.8}
           numberOfLines={1}
           style={[styles.text, { color: palette.text }]}
         >
@@ -82,11 +88,12 @@ export default function PrimaryButton({
 const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
-    borderRadius: 12,
+    borderRadius: 18,
+    borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 58,
+    minHeight: 56,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
   },
   content: {
     alignItems: 'center',
@@ -96,7 +103,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   text: {
-    ...typography.h2,
-    textTransform: 'uppercase',
+    ...typography.label,
+    fontFamily: 'AvenirNext-DemiBold',
   },
 });

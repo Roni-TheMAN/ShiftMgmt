@@ -47,27 +47,34 @@ export default function NumericKeypad({
     <View style={styles.container}>
       {keypadRows.map((row) => (
         <View key={row.join('-')} style={styles.row}>
-          {row.map((key) => (
-            <Pressable
-              accessibilityRole="button"
-              disabled={disabled}
-              key={key}
-              onPress={() => handlePress(key)}
-              style={({ pressed }) => [
-                styles.key,
-                useCompactKeys ? styles.keyCompact : null,
-                {
-                  backgroundColor: pressed ? colors.surface : colors.white,
-                  borderColor: colors.border,
-                  opacity: disabled ? 0.6 : 1,
-                },
-              ]}
-            >
-              <Text style={[styles.keyText, useCompactKeys ? styles.keyTextCompact : null]}>
-                {key}
-              </Text>
-            </Pressable>
-          ))}
+          {row.map((key) => {
+            const isUtility = key === 'CLR' || key === 'DEL';
+            return (
+              <Pressable
+                accessibilityRole="button"
+                disabled={disabled}
+                key={key}
+                onPress={() => handlePress(key)}
+                style={({ pressed }) => [
+                  styles.key,
+                  useCompactKeys ? styles.keyCompact : null,
+                  isUtility ? styles.utilityKey : null,
+                  pressed ? styles.keyPressed : null,
+                  disabled ? styles.keyDisabled : null,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.keyText,
+                    useCompactKeys ? styles.keyTextCompact : null,
+                    isUtility ? styles.utilityKeyText : null,
+                  ]}
+                >
+                  {key}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       ))}
     </View>
@@ -81,25 +88,40 @@ const styles = StyleSheet.create({
   },
   key: {
     alignItems: 'center',
-    borderRadius: 14,
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: 18,
     borderWidth: 1,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 72,
+    minHeight: 76,
   },
   keyCompact: {
-    minHeight: 62,
+    minHeight: 64,
+  },
+  keyDisabled: {
+    opacity: 0.5,
+  },
+  keyPressed: {
+    backgroundColor: colors.surfaceHighlight,
   },
   keyText: {
     ...typography.h2,
     color: colors.textPrimary,
   },
   keyTextCompact: {
-    fontSize: 20,
-    lineHeight: 26,
+    fontSize: 22,
+    lineHeight: 28,
   },
   row: {
     flexDirection: 'row',
     gap: spacing.sm,
+  },
+  utilityKey: {
+    backgroundColor: colors.surface,
+  },
+  utilityKeyText: {
+    ...typography.label,
+    color: colors.textSecondary,
   },
 });

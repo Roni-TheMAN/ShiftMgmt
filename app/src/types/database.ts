@@ -5,6 +5,14 @@ export type ClockEventAdminTag = 'NONE' | 'CREATED' | 'EDITED';
 export interface EmployeeRecord {
   id: number;
   name: string;
+  job_title: string;
+  hourly_rate: number;
+  department: string;
+  start_date: string;
+  photo_path: string | null;
+  address: string | null;
+  email: string | null;
+  phone_number: string;
   pin_hash: string;
   pin_code: string | null;
   active: number;

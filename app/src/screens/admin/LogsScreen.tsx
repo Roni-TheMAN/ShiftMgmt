@@ -11,6 +11,9 @@ import {
 } from 'react-native';
 import AdminScreenContainer from '../../components/AdminScreenContainer';
 import PrimaryButton from '../../components/PrimaryButton';
+import PageHeader from '../../components/ui/PageHeader';
+import StatusChip from '../../components/ui/StatusChip';
+import SurfaceCard from '../../components/ui/SurfaceCard';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
 import {
@@ -53,31 +56,25 @@ export default function LogsScreen({ navigation }: LogsScreenProps) {
 
   return (
     <AdminScreenContainer>
-      <View style={[styles.headerRow, isCompactWidth ? styles.headerRowCompact : null]}>
-        <View>
-          <Text style={styles.title}>Clock Event Logs</Text>
-          <Text style={styles.subtitle}>Most recent events with saved photo thumbnails.</Text>
-        </View>
-        <View style={[styles.headerActions, isCompactWidth ? styles.headerActionsCompact : null]}>
-          <PrimaryButton
-            fullWidth={isVeryCompactWidth}
-            onPress={() => {
-              markActivity();
-              void loadEvents();
-            }}
-            style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-            title="Refresh"
-            variant="primary"
-          />
-          <PrimaryButton
-            fullWidth={isVeryCompactWidth}
-            onPress={() => navigation.goBack()}
-            style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-            title="Back"
-            variant="neutral"
-          />
-        </View>
-      </View>
+      <PageHeader
+        actions={
+          <>
+            <PrimaryButton
+              fullWidth={isVeryCompactWidth}
+              onPress={() => {
+                markActivity();
+                void loadEvents();
+              }}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title="Refresh"
+              variant="primary"
+            />
+          </>
+        }
+        onBack={() => navigation.goBack()}
+        subtitle="Most recent events with saved photo thumbnails."
+        title="Clock Event Logs"
+      />
 
       {isLoading ? (
         <View style={styles.centered}>
@@ -89,30 +86,22 @@ export default function LogsScreen({ navigation }: LogsScreenProps) {
           data={events}
           keyExtractor={(item) => String(item.id)}
           ListEmptyComponent={
-            <View style={styles.emptyCard}>
+            <SurfaceCard padding="lg" style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No logs found.</Text>
-            </View>
+            </SurfaceCard>
           }
           renderItem={({ item }) => (
-            <View style={[styles.row, isCompactWidth ? styles.rowCompact : null]}>
+            <SurfaceCard
+              padding="lg"
+              style={[styles.row, isCompactWidth ? styles.rowCompact : null]}
+              tone={item.type === 'IN' ? 'accent' : 'warning'}
+            >
               {item.photo_path === AUTO_CLOCK_OUT_MARKER_PHOTO_PATH ? (
-                <View
-                  style={[
-                    styles.thumb,
-                    styles.autoThumb,
-                    isCompactWidth ? styles.thumbCompact : null,
-                  ]}
-                >
+                <View style={[styles.thumb, styles.autoThumb, isCompactWidth ? styles.thumbCompact : null]}>
                   <Text style={styles.autoThumbText}>AUTO</Text>
                 </View>
               ) : item.photo_path === ADMIN_MANUAL_EVENT_MARKER_PHOTO_PATH ? (
-                <View
-                  style={[
-                    styles.thumb,
-                    styles.manualThumb,
-                    isCompactWidth ? styles.thumbCompact : null,
-                  ]}
-                >
+                <View style={[styles.thumb, styles.manualThumb, isCompactWidth ? styles.thumbCompact : null]}>
                   <Text style={styles.manualThumbText}>ADMIN</Text>
                 </View>
               ) : (
@@ -122,7 +111,13 @@ export default function LogsScreen({ navigation }: LogsScreenProps) {
                 />
               )}
               <View style={styles.meta}>
-                <Text style={styles.employee}>{item.employee_name}</Text>
+                <View style={styles.metaHeader}>
+                  <Text style={styles.employee}>{item.employee_name}</Text>
+                  <StatusChip
+                    label={item.type === 'IN' ? 'IN' : 'OUT'}
+                    tone={item.type === 'IN' ? 'success' : 'warning'}
+                  />
+                </View>
                 <Text style={styles.eventText}>
                   {item.type === 'IN'
                     ? item.source === 'AUTO'
@@ -132,20 +127,19 @@ export default function LogsScreen({ navigation }: LogsScreenProps) {
                       ? 'Clock Out (Auto)'
                       : 'Clock Out'}
                 </Text>
-                <Text style={styles.timeText}>
-                  {new Date(item.timestamp).toLocaleString()}
-                </Text>
+                <Text style={styles.timeText}>{new Date(item.timestamp).toLocaleString()}</Text>
                 {item.admin_tag !== 'NONE' ? (
                   <Text style={styles.editMetaText}>
                     {item.admin_tag}
                     {item.last_edited_at
-                      ? ` • Edited ${new Date(item.last_edited_at).toLocaleString()}`
+                      ? ` - Edited ${new Date(item.last_edited_at).toLocaleString()}`
                       : ''}
                   </Text>
                 ) : null}
               </View>
-            </View>
+            </SurfaceCard>
           )}
+          showsVerticalScrollIndicator={false}
         />
       )}
 
@@ -157,24 +151,12 @@ export default function LogsScreen({ navigation }: LogsScreenProps) {
 const styles = StyleSheet.create({
   autoThumb: {
     alignItems: 'center',
-    borderColor: colors.warning,
-    borderWidth: 1,
+    backgroundColor: colors.warningMuted,
     justifyContent: 'center',
   },
   autoThumbText: {
     ...typography.label,
     color: colors.warning,
-  },
-  manualThumb: {
-    alignItems: 'center',
-    borderColor: colors.primary,
-    borderWidth: 1,
-    justifyContent: 'center',
-  },
-  manualThumbText: {
-    ...typography.caption,
-    color: colors.primary,
-    fontWeight: '700',
   },
   centered: {
     alignItems: 'center',
@@ -184,21 +166,19 @@ const styles = StyleSheet.create({
   compactActionButton: {
     flex: 1,
   },
+  editMetaText: {
+    ...typography.caption,
+    color: colors.info,
+  },
   employee: {
     ...typography.h2,
     color: colors.textPrimary,
-  },
-  editMetaText: {
-    ...typography.caption,
-    color: colors.primary,
+    flex: 1,
   },
   emptyCard: {
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: spacing.lg,
+    minHeight: 180,
+    justifyContent: 'center',
   },
   emptyTitle: {
     ...typography.h2,
@@ -210,73 +190,55 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   eventText: {
-    ...typography.label,
+    ...typography.body,
     color: colors.textSecondary,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  headerActionsCompact: {
-    flexWrap: 'wrap',
-    width: '100%',
-  },
-  headerRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  headerRowCompact: {
-    alignItems: 'stretch',
-    flexDirection: 'column',
-    gap: spacing.sm,
+    marginTop: spacing.xs,
   },
   listContent: {
-    gap: spacing.sm,
-    paddingBottom: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing.xxl,
+  },
+  manualThumb: {
+    alignItems: 'center',
+    backgroundColor: colors.infoMuted,
+    justifyContent: 'center',
+  },
+  manualThumbText: {
+    ...typography.caption,
+    color: colors.info,
+    fontFamily: 'AvenirNext-DemiBold',
   },
   meta: {
     flex: 1,
     gap: spacing.xs,
   },
-  row: {
+  metaHeader: {
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: spacing.md,
-    padding: spacing.sm,
+  },
+  row: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
   },
   rowCompact: {
     alignItems: 'flex-start',
     flexDirection: 'column',
   },
-  subtitle: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
   thumb: {
-    backgroundColor: colors.border,
-    borderRadius: 8,
-    height: 70,
-    width: 90,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 18,
+    height: 84,
+    width: 112,
   },
   thumbCompact: {
     alignSelf: 'flex-start',
-    height: 88,
-    width: 120,
+    height: 96,
+    width: 132,
   },
   timeText: {
     ...typography.caption,
     color: colors.textSecondary,
-  },
-  title: {
-    ...typography.title,
-    color: colors.primary,
-    textTransform: 'uppercase',
   },
 });

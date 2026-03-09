@@ -3,6 +3,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import PrimaryButton from '../components/PrimaryButton';
 import ScreenContainer from '../components/ScreenContainer';
+import PageHeader from '../components/ui/PageHeader';
+import StatusChip from '../components/ui/StatusChip';
+import SurfaceCard from '../components/ui/SurfaceCard';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
 import { CONFIRMATION_RESET_MS } from '../constants/app';
 import { colors, spacing, typography } from '../theme';
@@ -46,28 +49,38 @@ export default function ConfirmationScreen({
 
   return (
     <ScreenContainer style={[styles.container, { paddingHorizontal: horizontalPadding }]}>
-      <View style={[styles.card, isCompactWidth ? styles.cardCompact : null]}>
-        <Text style={styles.title}>{clockLabel}</Text>
-        <Text style={styles.employeeName}>{employeeName}</Text>
-        <Text style={styles.timestamp}>{formattedTime}</Text>
-        <Text style={styles.resetText}>
-          Returning to home in {secondsRemaining} second
-          {secondsRemaining === 1 ? '' : 's'}.
-        </Text>
+      <View style={styles.shell}>
+        <PageHeader
+          badgeLabel={eventType === 'IN' ? 'IN' : 'OUT'}
+          badgeTone={eventType === 'IN' ? 'success' : 'warning'}
+          subtitle="Clock event saved successfully."
+          title={clockLabel}
+        />
 
-        <View style={styles.buttonRow}>
-          <PrimaryButton
-            fullWidth={isCompactWidth}
-            onPress={() => {
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Home' }],
-              });
-            }}
-            title="Done"
-            variant="success"
-          />
-        </View>
+        <SurfaceCard padding="lg" style={styles.card} tone="accent">
+          <View style={styles.statusRow}>
+            <Text style={styles.employeeName}>{employeeName}</Text>
+            <StatusChip label="Completed" tone="success" />
+          </View>
+          <Text style={styles.timestamp}>{formattedTime}</Text>
+          <Text style={styles.resetText}>
+            Returning to home in {secondsRemaining} second{secondsRemaining === 1 ? '' : 's'}.
+          </Text>
+
+          <View style={styles.buttonRow}>
+            <PrimaryButton
+              fullWidth={isCompactWidth}
+              onPress={() => {
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Home' }],
+                });
+              }}
+              title="Done"
+              variant="success"
+            />
+          </View>
+        </SurfaceCard>
       </View>
     </ScreenContainer>
   );
@@ -79,42 +92,35 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   card: {
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    maxWidth: 560,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xxl,
+    maxWidth: 640,
     width: '100%',
   },
-  cardCompact: {
-    paddingHorizontal: spacing.lg,
-  },
   container: {
-    alignItems: 'center',
     justifyContent: 'center',
-    padding: spacing.lg,
+    paddingVertical: spacing.lg,
   },
   employeeName: {
-    ...typography.title,
+    ...typography.h1,
     color: colors.textPrimary,
-    marginTop: spacing.sm,
+    flex: 1,
   },
   resetText: {
-    ...typography.label,
+    ...typography.body,
     color: colors.textSecondary,
     marginTop: spacing.lg,
+  },
+  shell: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  statusRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
   },
   timestamp: {
     ...typography.h2,
     color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
-  title: {
-    ...typography.h1,
-    color: colors.success,
-    textTransform: 'uppercase',
+    marginTop: spacing.md,
   },
 });

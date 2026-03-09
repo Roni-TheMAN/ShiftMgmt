@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import PrimaryButton from '../components/PrimaryButton';
 import ScreenContainer from '../components/ScreenContainer';
+import PageHeader from '../components/ui/PageHeader';
+import StatusChip from '../components/ui/StatusChip';
+import SurfaceCard from '../components/ui/SurfaceCard';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
 import { saveCapturedPhoto } from '../services/camera/photoStorage';
 import { createClockEvent } from '../services/repositories/clockEventRepository';
@@ -117,8 +120,10 @@ export default function CameraCaptureScreen({
   if (!permission) {
     return (
       <ScreenContainer style={styles.centered}>
-        <ActivityIndicator color={colors.primary} size="large" />
-        <Text style={styles.infoText}>Requesting camera permission...</Text>
+        <SurfaceCard padding="lg" style={styles.permissionCard} tone="info">
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.infoText}>Requesting camera permission...</Text>
+        </SurfaceCard>
       </ScreenContainer>
     );
   }
@@ -126,104 +131,120 @@ export default function CameraCaptureScreen({
   if (!permission.granted) {
     return (
       <ScreenContainer style={styles.centered}>
-        <Text style={styles.errorTitle}>Camera Access Required</Text>
-        <Text style={styles.infoText}>
-          This kiosk cannot clock events without a camera photo.
-        </Text>
-        <View
-          style={[
-            styles.permissionActions,
-            isCompactWidth ? styles.actionsWrap : null,
-            isVeryCompactWidth ? styles.actionsStacked : null,
-          ]}
-        >
-          <PrimaryButton
-            fullWidth={isVeryCompactWidth}
-            onPress={() => {
-              void requestPermission();
-            }}
-            style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-            title="Try Again"
-            variant="primary"
-          />
-          <PrimaryButton
-            fullWidth={isVeryCompactWidth}
-            onPress={goBackHome}
-            style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-            title="Cancel"
-            variant="neutral"
-          />
-        </View>
+        <SurfaceCard padding="lg" style={styles.permissionCard} tone="danger">
+          <Text style={styles.errorTitle}>Camera Access Required</Text>
+          <Text style={styles.infoText}>
+            This kiosk cannot clock events without a camera photo.
+          </Text>
+          <View
+            style={[
+              styles.permissionActions,
+              isCompactWidth ? styles.actionsWrap : null,
+              isVeryCompactWidth ? styles.actionsStacked : null,
+            ]}
+          >
+            <PrimaryButton
+              fullWidth={isVeryCompactWidth}
+              onPress={() => {
+                void requestPermission();
+              }}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title="Try Again"
+              variant="success"
+            />
+            <PrimaryButton
+              fullWidth={isVeryCompactWidth}
+              onPress={goBackHome}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title="Cancel"
+              variant="neutral"
+            />
+          </View>
+        </SurfaceCard>
       </ScreenContainer>
     );
   }
 
   return (
     <ScreenContainer style={[styles.container, { paddingHorizontal: horizontalPadding }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          {eventType === 'IN' ? 'Clock In' : 'Clock Out'}
-        </Text>
-        <Text style={styles.headerSubtitle}>{employeeName}</Text>
-      </View>
+      <PageHeader
+        badgeLabel={eventType === 'IN' ? 'Clock In' : 'Clock Out'}
+        badgeTone={eventType === 'IN' ? 'success' : 'warning'}
+        onBack={goBackHome}
+        subtitle={employeeName}
+        title="Identity Capture"
+      />
 
-      <View style={styles.cameraCard}>
-        <CameraView
-          active
-          animateShutter={false}
-          facing="front"
-          mirror
-          mode="picture"
-          onCameraReady={() => {
-            setIsCameraReady(true);
-            scheduleAutoCapture();
-          }}
-          ref={cameraRef}
-          style={styles.camera}
-        />
-      </View>
-
-      <View style={styles.footer}>
-        <Text style={styles.statusText}>
-          {error
-            ? error
-            : isProcessing
-              ? 'Saving clock event...'
-              : isCameraReady
-                ? 'Capturing photo...'
-                : 'Starting camera...'}
-        </Text>
-
-        <View
-          style={[
-            styles.footerActions,
-            isCompactWidth ? styles.actionsWrap : null,
-            isVeryCompactWidth ? styles.actionsStacked : null,
-          ]}
-        >
-          {error ? (
-            <PrimaryButton
-              fullWidth={isVeryCompactWidth}
-              onPress={() => {
-                setError(null);
-                void takePhotoAndSave();
-              }}
-              style={
-                isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined
-              }
-              title="Retry Capture"
-              variant="primary"
-            />
-          ) : null}
-          <PrimaryButton
-            fullWidth={isVeryCompactWidth}
-            onPress={goBackHome}
-            style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-            title="Cancel"
-            variant="neutral"
+      <SurfaceCard padding="lg" style={styles.cameraCard} tone="default">
+        <View style={styles.cardHeader}>
+          <View>
+            <Text style={styles.cardEyebrow}>Live preview</Text>
+            <Text style={styles.cardTitle}>Front camera frame</Text>
+          </View>
+          <StatusChip
+            label={error ? 'Error' : isProcessing ? 'Saving' : isCameraReady ? 'Live' : 'Booting'}
+            tone={error ? 'danger' : isProcessing ? 'warning' : isCameraReady ? 'success' : 'neutral'}
           />
         </View>
-      </View>
+
+        <View style={styles.previewShell}>
+          <CameraView
+            active
+            animateShutter={false}
+            facing="front"
+            mirror
+            mode="picture"
+            onCameraReady={() => {
+              setIsCameraReady(true);
+              scheduleAutoCapture();
+            }}
+            ref={cameraRef}
+            style={styles.camera}
+          />
+        </View>
+
+        <View style={styles.footer}>
+          <Text style={styles.statusText}>
+            {error
+              ? error
+              : isProcessing
+                ? 'Saving clock event...'
+                : isCameraReady
+                  ? 'Capturing photo...'
+                  : 'Starting camera...'}
+          </Text>
+
+          <View
+            style={[
+              styles.footerActions,
+              isCompactWidth ? styles.actionsWrap : null,
+              isVeryCompactWidth ? styles.actionsStacked : null,
+            ]}
+          >
+            {error ? (
+              <PrimaryButton
+                fullWidth={isVeryCompactWidth}
+                onPress={() => {
+                  setError(null);
+                  void takePhotoAndSave();
+                }}
+                style={
+                  isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined
+                }
+                title="Retry Capture"
+                variant="success"
+              />
+            ) : null}
+            <PrimaryButton
+              fullWidth={isVeryCompactWidth}
+              onPress={goBackHome}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title="Cancel"
+              variant="neutral"
+            />
+          </View>
+        </View>
+      </SurfaceCard>
     </ScreenContainer>
   );
 }
@@ -241,12 +262,24 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   cameraCard: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
     flex: 1,
-    overflow: 'hidden',
+    marginBottom: spacing.xl,
+  },
+  cardEyebrow: {
+    ...typography.eyebrow,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+  },
+  cardHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  cardTitle: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
   },
   centered: {
     alignItems: 'center',
@@ -254,17 +287,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.lg,
   },
-  container: {
-    flex: 1,
-    padding: spacing.lg,
-  },
   compactActionButton: {
     flex: 1,
+  },
+  container: {
+    flex: 1,
+    paddingTop: spacing.lg,
   },
   errorTitle: {
     ...typography.h1,
     color: colors.danger,
-    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   footer: {
     alignItems: 'center',
@@ -276,19 +309,6 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     justifyContent: 'center',
     width: '100%',
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  headerSubtitle: {
-    ...typography.h2,
-    color: colors.textSecondary,
-  },
-  headerTitle: {
-    ...typography.title,
-    color: colors.textPrimary,
-    textTransform: 'uppercase',
   },
   infoText: {
     ...typography.body,
@@ -303,9 +323,22 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
     width: '100%',
   },
+  permissionCard: {
+    maxWidth: 520,
+    width: '100%',
+  },
+  previewShell: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: 28,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 320,
+    overflow: 'hidden',
+  },
   statusText: {
-    ...typography.label,
-    color: colors.textPrimary,
+    ...typography.body,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
 });

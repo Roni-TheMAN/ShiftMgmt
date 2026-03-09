@@ -25,12 +25,15 @@ export default function AdminScrollContainer({
   const { horizontalPadding, isShortHeight } = useResponsiveLayout();
   const { markActivity } = useAdminSession();
   const insets = useSafeAreaInsets();
+  const keyboardVerticalOffset =
+    Platform.OS === 'ios' ? insets.top + spacing.sm : spacing.md;
 
   return (
     <ScreenContainer style={styles.outer}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        enabled={Platform.OS === 'ios'}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        enabled
+        keyboardVerticalOffset={keyboardVerticalOffset}
         style={styles.outer}
       >
         <ScrollView
@@ -62,7 +65,7 @@ export default function AdminScrollContainer({
 const styles = StyleSheet.create({
   inner: {
     alignSelf: 'center',
-    maxWidth: 1200,
+    maxWidth: 1360,
     paddingTop: spacing.lg,
     width: '100%',
   },

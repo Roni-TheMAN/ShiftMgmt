@@ -7,8 +7,15 @@ const PAY_PERIOD_LENGTH_KEY = 'settings_pay_period_length';
 const PAY_PERIOD_START_DAY_KEY = 'settings_pay_period_start_day';
 const PAY_PERIOD_START_DATE_KEY = 'settings_pay_period_start_date';
 const FIRST_PAYROLL_RUN_DAYS_KEY = 'settings_first_payroll_run_days';
+const OT1_WEEKLY_THRESHOLD_HOURS_KEY = 'settings_ot1_weekly_threshold_hours';
+const OT1_MULTIPLIER_KEY = 'settings_ot1_multiplier';
+const OT2_MULTIPLIER_KEY = 'settings_ot2_multiplier';
+const OT2_HOLIDAY_DATES_KEY = 'settings_ot2_holiday_dates';
 const AUTO_CLOCK_OUT_ENABLED_KEY = 'settings_auto_clock_out_enabled';
 const AUTO_CLOCK_OUT_HOURS_KEY = 'settings_auto_clock_out_hours';
+const PROPERTY_NAME_KEY = 'settings_property_name';
+const PROPERTY_ADDRESS_KEY = 'settings_property_address';
+const PROPERTY_DETAILS_KEY = 'settings_property_details';
 const LEGACY_PAY_PERIOD_LENGTH_KEY = 'data_analysis_pay_period_length';
 const LEGACY_PAY_PERIOD_START_DAY_KEY = 'data_analysis_pay_period_start_day';
 
@@ -39,8 +46,18 @@ export type PayrollSettings = {
   payPeriodStartDay: PayPeriodStartDay;
   payPeriodStartDate: string;
   firstPayrollRunDays: number | null;
+  ot1WeeklyThresholdHours: number;
+  ot1Multiplier: number;
+  ot2Multiplier: number;
+  ot2HolidayDates: string[];
   autoClockOutEnabled: boolean;
   autoClockOutHours: number;
+};
+
+export type PropertySettings = {
+  propertyName: string;
+  propertyAddress: string;
+  propertyDetails: string;
 };
 
 const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
@@ -48,8 +65,18 @@ const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   payPeriodStartDay: 'MONDAY',
   payPeriodStartDate: isoDateLocal(new Date()),
   firstPayrollRunDays: null,
+  ot1WeeklyThresholdHours: 40,
+  ot1Multiplier: 1.5,
+  ot2Multiplier: 2,
+  ot2HolidayDates: [],
   autoClockOutEnabled: false,
   autoClockOutHours: 12,
+};
+
+const DEFAULT_PROPERTY_SETTINGS: PropertySettings = {
+  propertyAddress: '',
+  propertyDetails: '',
+  propertyName: '',
 };
 
 function nowIso() {
@@ -185,6 +212,62 @@ function validateAutoClockOutHours(value: number) {
   }
 }
 
+function validateOt1WeeklyThresholdHours(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error('OT1 weekly threshold must be greater than 0.');
+  }
+  if (value > 168) {
+    throw new Error('OT1 weekly threshold cannot exceed 168 hours.');
+  }
+}
+
+function validateOvertimeMultiplier(label: 'OT1' | 'OT2', value: number) {
+  if (!Number.isFinite(value) || value < 1) {
+    throw new Error(`${label} multiplier must be at least 1.0.`);
+  }
+  if (value > 5) {
+    throw new Error(`${label} multiplier cannot exceed 5.0.`);
+  }
+}
+
+function normalizeHolidayDates(dates: string[]) {
+  const normalized = Array.from(
+    new Set(
+      dates
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
+  for (const date of normalized) {
+    if (!isValidIsoDate(date)) {
+      throw new Error('Holiday dates must use YYYY-MM-DD format.');
+    }
+  }
+
+  if (normalized.length > 366) {
+    throw new Error('Holiday dates cannot exceed 366 entries.');
+  }
+
+  return normalized;
+}
+
+function normalizePropertyText(value: string) {
+  return value.trim();
+}
+
+function validatePropertySettings(settings: PropertySettings) {
+  if (settings.propertyName.length > 120) {
+    throw new Error('Property name cannot exceed 120 characters.');
+  }
+  if (settings.propertyAddress.length > 240) {
+    throw new Error('Property address cannot exceed 240 characters.');
+  }
+  if (settings.propertyDetails.length > 500) {
+    throw new Error('Additional property details cannot exceed 500 characters.');
+  }
+}
+
 export async function ensureDefaultAdminPin() {
   const existing = await getSettingValue(ADMIN_PIN_KEY);
   if (existing) {
@@ -230,6 +313,10 @@ export async function getPayrollSettings(): Promise<PayrollSettings> {
     legacyPayPeriodStartDay,
     storedPayPeriodStartDate,
     storedFirstPayrollRunDays,
+    storedOt1WeeklyThresholdHours,
+    storedOt1Multiplier,
+    storedOt2Multiplier,
+    storedOt2HolidayDates,
     storedAutoClockOutEnabled,
     storedAutoClockOutHours,
   ] = await Promise.all([
@@ -239,6 +326,10 @@ export async function getPayrollSettings(): Promise<PayrollSettings> {
     getSettingValue(LEGACY_PAY_PERIOD_START_DAY_KEY),
     getSettingValue(PAY_PERIOD_START_DATE_KEY),
     getSettingValue(FIRST_PAYROLL_RUN_DAYS_KEY),
+    getSettingValue(OT1_WEEKLY_THRESHOLD_HOURS_KEY),
+    getSettingValue(OT1_MULTIPLIER_KEY),
+    getSettingValue(OT2_MULTIPLIER_KEY),
+    getSettingValue(OT2_HOLIDAY_DATES_KEY),
     getSettingValue(AUTO_CLOCK_OUT_ENABLED_KEY),
     getSettingValue(AUTO_CLOCK_OUT_HOURS_KEY),
   ]);
@@ -276,6 +367,54 @@ export async function getPayrollSettings(): Promise<PayrollSettings> {
     firstPayrollRunDays = null;
   }
 
+  const ot1WeeklyThresholdRaw = Number.parseFloat(storedOt1WeeklyThresholdHours ?? '');
+  const parsedOt1WeeklyThreshold =
+    Number.isFinite(ot1WeeklyThresholdRaw) && ot1WeeklyThresholdRaw > 0
+      ? ot1WeeklyThresholdRaw
+      : DEFAULT_PAYROLL_SETTINGS.ot1WeeklyThresholdHours;
+  let ot1WeeklyThresholdHours = parsedOt1WeeklyThreshold;
+  try {
+    validateOt1WeeklyThresholdHours(ot1WeeklyThresholdHours);
+  } catch {
+    ot1WeeklyThresholdHours = DEFAULT_PAYROLL_SETTINGS.ot1WeeklyThresholdHours;
+  }
+
+  const ot1MultiplierRaw = Number.parseFloat(storedOt1Multiplier ?? '');
+  const parsedOt1Multiplier =
+    Number.isFinite(ot1MultiplierRaw) && ot1MultiplierRaw >= 1
+      ? ot1MultiplierRaw
+      : DEFAULT_PAYROLL_SETTINGS.ot1Multiplier;
+  let ot1Multiplier = parsedOt1Multiplier;
+  try {
+    validateOvertimeMultiplier('OT1', ot1Multiplier);
+  } catch {
+    ot1Multiplier = DEFAULT_PAYROLL_SETTINGS.ot1Multiplier;
+  }
+
+  const ot2MultiplierRaw = Number.parseFloat(storedOt2Multiplier ?? '');
+  const parsedOt2Multiplier =
+    Number.isFinite(ot2MultiplierRaw) && ot2MultiplierRaw >= 1
+      ? ot2MultiplierRaw
+      : DEFAULT_PAYROLL_SETTINGS.ot2Multiplier;
+  let ot2Multiplier = parsedOt2Multiplier;
+  try {
+    validateOvertimeMultiplier('OT2', ot2Multiplier);
+  } catch {
+    ot2Multiplier = DEFAULT_PAYROLL_SETTINGS.ot2Multiplier;
+  }
+
+  let ot2HolidayDates = DEFAULT_PAYROLL_SETTINGS.ot2HolidayDates;
+  if (storedOt2HolidayDates) {
+    try {
+      const parsed = JSON.parse(storedOt2HolidayDates);
+      if (Array.isArray(parsed) && parsed.every((value) => typeof value === 'string')) {
+        ot2HolidayDates = normalizeHolidayDates(parsed);
+      }
+    } catch {
+      ot2HolidayDates = DEFAULT_PAYROLL_SETTINGS.ot2HolidayDates;
+    }
+  }
+
   const autoClockOutEnabled =
     storedAutoClockOutEnabled === '1'
       ? true
@@ -298,6 +437,10 @@ export async function getPayrollSettings(): Promise<PayrollSettings> {
   return {
     autoClockOutEnabled,
     autoClockOutHours,
+    ot1Multiplier,
+    ot1WeeklyThresholdHours,
+    ot2HolidayDates,
+    ot2Multiplier,
     payPeriodLength,
     payPeriodStartDay,
     payPeriodStartDate,
@@ -309,6 +452,10 @@ export async function savePayrollSettings(settings: PayrollSettings) {
   validatePayPeriodLength(settings.payPeriodLength);
   validatePayPeriodStartDay(settings.payPeriodStartDay);
   validatePayPeriodStartDate(settings.payPeriodStartDate);
+  validateOt1WeeklyThresholdHours(settings.ot1WeeklyThresholdHours);
+  validateOvertimeMultiplier('OT1', settings.ot1Multiplier);
+  validateOvertimeMultiplier('OT2', settings.ot2Multiplier);
+  const normalizedHolidayDates = normalizeHolidayDates(settings.ot2HolidayDates);
   validateAutoClockOutHours(settings.autoClockOutHours);
   const normalizedFirstPayrollRunDays = supportsFirstPayrollRunDays(
     settings.payPeriodLength,
@@ -325,6 +472,13 @@ export async function savePayrollSettings(settings: PayrollSettings) {
       AUTO_CLOCK_OUT_ENABLED_KEY,
       settings.autoClockOutEnabled ? '1' : '0',
     ),
+    upsertSetting(
+      OT1_WEEKLY_THRESHOLD_HOURS_KEY,
+      String(settings.ot1WeeklyThresholdHours),
+    ),
+    upsertSetting(OT1_MULTIPLIER_KEY, String(settings.ot1Multiplier)),
+    upsertSetting(OT2_MULTIPLIER_KEY, String(settings.ot2Multiplier)),
+    upsertSetting(OT2_HOLIDAY_DATES_KEY, JSON.stringify(normalizedHolidayDates)),
     upsertSetting(AUTO_CLOCK_OUT_HOURS_KEY, String(settings.autoClockOutHours)),
     normalizedFirstPayrollRunDays === null
       ? deleteSetting(FIRST_PAYROLL_RUN_DAYS_KEY)
@@ -332,5 +486,34 @@ export async function savePayrollSettings(settings: PayrollSettings) {
           FIRST_PAYROLL_RUN_DAYS_KEY,
           String(normalizedFirstPayrollRunDays),
         ),
+  ]);
+}
+
+export async function getPropertySettings(): Promise<PropertySettings> {
+  const [storedName, storedAddress, storedDetails] = await Promise.all([
+    getSettingValue(PROPERTY_NAME_KEY),
+    getSettingValue(PROPERTY_ADDRESS_KEY),
+    getSettingValue(PROPERTY_DETAILS_KEY),
+  ]);
+
+  return {
+    propertyAddress: storedAddress ?? DEFAULT_PROPERTY_SETTINGS.propertyAddress,
+    propertyDetails: storedDetails ?? DEFAULT_PROPERTY_SETTINGS.propertyDetails,
+    propertyName: storedName ?? DEFAULT_PROPERTY_SETTINGS.propertyName,
+  };
+}
+
+export async function savePropertySettings(settings: PropertySettings) {
+  const normalized: PropertySettings = {
+    propertyAddress: normalizePropertyText(settings.propertyAddress),
+    propertyDetails: normalizePropertyText(settings.propertyDetails),
+    propertyName: normalizePropertyText(settings.propertyName),
+  };
+  validatePropertySettings(normalized);
+
+  await Promise.all([
+    upsertSetting(PROPERTY_NAME_KEY, normalized.propertyName),
+    upsertSetting(PROPERTY_ADDRESS_KEY, normalized.propertyAddress),
+    upsertSetting(PROPERTY_DETAILS_KEY, normalized.propertyDetails),
   ]);
 }

@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
+import PageHeader from '../../components/ui/PageHeader';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
 import { buildPayrollHoursSummary } from '../../services/payroll/hoursAggregation';
@@ -46,12 +47,18 @@ type PayrollHoursState = {
     payPeriodStartDate: string;
     payPeriodStartDay: string;
     firstPayrollRunDays: number | null;
+    ot1WeeklyThresholdHours: number;
+    ot1Multiplier: number;
+    ot2Multiplier: number;
+    ot2HolidayDates: string[];
   };
   summary: ReturnType<typeof buildPayrollHoursSummary>;
 };
 
 type ShiftEntry =
   ReturnType<typeof buildPayrollHoursSummary>['shiftsByEmployee'][number]['shifts'][number];
+type EmployeeTotalEntry =
+  ReturnType<typeof buildPayrollHoursSummary>['employeeTotals'][number];
 
 type ShiftFormState = {
   mode: 'ADD' | 'EDIT' | 'CLOSE';
@@ -123,6 +130,20 @@ function mergePayrollEvents(
 
 function formatHours(hours: number) {
   return `${hours.toFixed(2)}h`;
+}
+
+function formatCurrency(amount: number) {
+  return `$${amount.toFixed(2)}`;
+}
+
+function formatEmployeeInlineSummary(employee: EmployeeTotalEntry) {
+  return [
+    `REG ${formatHours(employee.regularHours)}`,
+    `OT1 ${formatHours(employee.ot1Hours)}`,
+    `OT2 ${formatHours(employee.ot2Hours)}`,
+    `TOT ${formatHours(employee.hours)}`,
+    `PAY ${formatCurrency(employee.totalPay)}`,
+  ].join(' | ');
 }
 
 function formatDay(dayKey: string, short = false) {
@@ -337,16 +358,29 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
         (event): event is ClockEventWithEmployee => Boolean(event),
       );
       const eventsForSummary = mergePayrollEvents(eventsInRange, carryoverClockOuts);
+      const employeeHourlyRates = new Map(
+        allEmployees.map((employee) => [employee.id, employee.hourly_rate]),
+      );
 
       const summary = buildPayrollHoursSummary(eventsForSummary, {
         periodEndDate: payPeriod.periodEndDate,
         periodStartDate: payPeriod.periodStartDate,
+      }, {
+        employeeHourlyRates,
+        ot1Multiplier: payrollSettings.ot1Multiplier,
+        ot1WeeklyThresholdHours: payrollSettings.ot1WeeklyThresholdHours,
+        ot2HolidayDates: payrollSettings.ot2HolidayDates,
+        ot2Multiplier: payrollSettings.ot2Multiplier,
       });
 
       setState({
         payPeriod,
         schedule: {
           firstPayrollRunDays: payrollSettings.firstPayrollRunDays,
+          ot1Multiplier: payrollSettings.ot1Multiplier,
+          ot1WeeklyThresholdHours: payrollSettings.ot1WeeklyThresholdHours,
+          ot2HolidayDates: payrollSettings.ot2HolidayDates,
+          ot2Multiplier: payrollSettings.ot2Multiplier,
           payPeriodLength: payrollSettings.payPeriodLength,
           payPeriodStartDate: payrollSettings.payPeriodStartDate,
           payPeriodStartDay: payrollSettings.payPeriodStartDay,
@@ -732,45 +766,37 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
 
   return (
     <AdminScrollContainer style={styles.content}>
-        <View style={[styles.headerRow, isCompactWidth ? styles.headerRowCompact : null]}>
-          <View>
-            <Text style={styles.title}>Payroll Hours</Text>
-            <Text style={styles.subtitle}>
-              Condensed payroll view with period history and shift-level detail.
-            </Text>
-          </View>
-          <View style={styles.headerActions}>
-            <PrimaryButton
-              disabled={isLoading || !state || isExportingReport}
-              fullWidth={isVeryCompactWidth}
-              onPress={() => {
-                void exportCurrentPayPeriodReport();
-              }}
-              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-              title={isExportingReport ? 'Exporting...' : 'Report'}
-              variant="success"
-            />
-            <PrimaryButton
-              fullWidth={isVeryCompactWidth}
-              onPress={() => {
-                markActivity();
-                void loadData();
-              }}
-              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-              title="Refresh"
-              variant="primary"
-            />
-            <PrimaryButton
-              fullWidth={isVeryCompactWidth}
-              onPress={() => {
-                navigation.goBack();
-              }}
-              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-              title="Back"
-              variant="neutral"
-            />
-          </View>
-        </View>
+        <PageHeader
+          actions={
+            <>
+              <PrimaryButton
+                disabled={isLoading || !state || isExportingReport}
+                fullWidth={isVeryCompactWidth}
+                onPress={() => {
+                  void exportCurrentPayPeriodReport();
+                }}
+                style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+                title={isExportingReport ? 'Exporting...' : 'Report'}
+                variant="success"
+              />
+              <PrimaryButton
+                fullWidth={isVeryCompactWidth}
+                onPress={() => {
+                  markActivity();
+                  void loadData();
+                }}
+                style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+                title="Refresh"
+                variant="primary"
+              />
+            </>
+          }
+          onBack={() => {
+            navigation.goBack();
+          }}
+          subtitle="Condensed payroll view with period history and shift-level detail."
+          title="Payroll Hours"
+        />
 
         {isLoading ? (
           <View style={styles.centered}>
@@ -796,6 +822,12 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                 {state.schedule.firstPayrollRunDays
                   ? `${state.schedule.firstPayrollRunDays} day(s)`
                   : 'None'}
+              </Text>
+              <Text style={styles.periodMeta}>
+                OT1: {state.schedule.ot1Multiplier.toFixed(2)}x over{' '}
+                {state.schedule.ot1WeeklyThresholdHours}h/week | OT2:{' '}
+                {state.schedule.ot2Multiplier.toFixed(2)}x on{' '}
+                {state.schedule.ot2HolidayDates.length} holiday(s)
               </Text>
 
               <View style={styles.periodNavRow}>
@@ -895,6 +927,12 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                 </Text>
               </View>
               <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Total Payroll</Text>
+                <Text style={styles.metricValue}>
+                  {formatCurrency(state.summary.totalPeriodPay)}
+                </Text>
+              </View>
+              <View style={styles.metricCard}>
                 <Text style={styles.metricLabel}>Shifts</Text>
                 <Text style={styles.metricValue}>{completedShiftCount}</Text>
               </View>
@@ -972,15 +1010,18 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                         isSelected ? styles.employeeRowSelected : null,
                       ]}
                     >
-                      <Text style={styles.employeeRowName}>
-                        {employee.employeeName} ({employee.completedShiftCount} shifts)
-                      </Text>
-                      <View style={styles.employeeRowRight}>
-                        <Text style={styles.employeeRowHours}>{formatHours(employee.hours)}</Text>
-                        <Text style={styles.employeeRowHint}>
-                          {isSelected ? 'Selected' : 'Tap for Logs'}
+                      <Text
+                        ellipsizeMode="tail"
+                        numberOfLines={1}
+                        style={styles.employeeRowLine}
+                      >
+                        <Text style={styles.employeeRowName}>
+                          {employee.employeeName}
                         </Text>
-                      </View>
+                        <Text style={styles.employeeRowSummary}>
+                          {` | ${formatEmployeeInlineSummary(employee)}`}
+                        </Text>
+                      </Text>
                     </Pressable>
                   );
                 })
@@ -1316,7 +1357,7 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                         display={activeShiftPicker.mode === 'date' ? 'inline' : 'spinner'}
                         mode={activeShiftPicker.mode}
                         onChange={handleIosShiftPickerChange}
-                        themeVariant="light"
+                        themeVariant="dark"
                         value={activeShiftPickerValue}
                       />
                     </View>
@@ -1490,7 +1531,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 12,
+    borderRadius: 24,
     borderWidth: 1,
     padding: spacing.md,
   },
@@ -1501,9 +1542,9 @@ const styles = StyleSheet.create({
   },
   compactNavButton: {
     alignItems: 'center',
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
     minWidth: 96,
     paddingHorizontal: spacing.md,
@@ -1543,7 +1584,7 @@ const styles = StyleSheet.create({
   dualCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 12,
+    borderRadius: 24,
     borderWidth: 1,
     flex: 1,
     minWidth: 280,
@@ -1555,7 +1596,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   employeeChip: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
     borderRadius: 999,
     borderWidth: 1,
@@ -1580,34 +1621,25 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   employeeRow: {
-    alignItems: 'center',
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     paddingVertical: spacing.sm,
   },
-  employeeRowHint: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: 'right',
-  },
-  employeeRowHours: {
-    ...typography.h2,
-    color: colors.textPrimary,
-    textAlign: 'right',
-  },
-  employeeRowName: {
-    ...typography.body,
+  employeeRowLine: {
     color: colors.textPrimary,
     flex: 1,
-    marginRight: spacing.sm,
   },
-  employeeRowRight: {
-    alignItems: 'flex-end',
+  employeeRowName: {
+    ...typography.label,
+    color: colors.textPrimary,
+    fontWeight: '700',
+  },
+  employeeRowSummary: {
+    ...typography.caption,
+    color: colors.textSecondary,
   },
   employeeRowSelected: {
-    backgroundColor: '#ECEFF3',
+    backgroundColor: colors.surfaceElevated,
   },
   editTag: {
     ...typography.caption,
@@ -1647,9 +1679,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   inlineActionButton: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
-    borderRadius: 8,
+    borderRadius: 14,
     borderWidth: 1,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
@@ -1677,7 +1709,7 @@ const styles = StyleSheet.create({
   metricCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 20,
     borderWidth: 1,
     minWidth: 150,
     padding: spacing.sm,
@@ -1714,7 +1746,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   quickHistoryChip: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
     borderRadius: 999,
     borderWidth: 1,
@@ -1748,7 +1780,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     ...typography.h2,
-    color: colors.primary,
+    color: colors.textPrimary,
   },
   closeToggleRow: {
     flexDirection: 'row',
@@ -1768,9 +1800,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   dateTimeFieldButton: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.input,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
     flex: 1,
     minWidth: 140,
@@ -1778,7 +1810,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   dateTimeFieldButtonActive: {
-    backgroundColor: '#E7EDF5',
+    backgroundColor: colors.surfaceElevated,
     borderColor: colors.primary,
   },
   dateTimeFieldLabel: {
@@ -1810,9 +1842,9 @@ const styles = StyleSheet.create({
   },
   input: {
     ...typography.body,
-    backgroundColor: colors.white,
+    backgroundColor: colors.input,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
     color: colors.textPrimary,
     marginTop: spacing.xs,
@@ -1820,9 +1852,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   pickerPanel: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceElevated,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 18,
     borderWidth: 1,
     marginTop: spacing.md,
     overflow: 'hidden',
@@ -1839,7 +1871,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   quickAdjustButton: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
     borderRadius: 999,
     borderWidth: 1,
@@ -1876,9 +1908,9 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
   },
   shiftEditorCard: {
-    backgroundColor: '#EEF2F6',
+    backgroundColor: colors.surfaceElevated,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 18,
     borderWidth: 1,
     marginBottom: spacing.md,
     padding: spacing.sm,
@@ -1889,8 +1921,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   shiftEmployeeBlock: {
+    backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 18,
     borderWidth: 1,
     marginTop: spacing.sm,
     padding: spacing.sm,
@@ -1929,21 +1962,21 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   shiftStatusComplete: {
-    backgroundColor: '#DDEBDD',
+    backgroundColor: colors.successMuted,
     color: colors.success,
   },
   shiftStatusOpen: {
-    backgroundColor: '#FFF6E8',
+    backgroundColor: colors.warningMuted,
     color: colors.warning,
   },
   shiftStatusUnmatched: {
-    backgroundColor: '#F3DADA',
+    backgroundColor: colors.dangerMuted,
     color: colors.danger,
   },
   shiftInlineButton: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
@@ -1979,13 +2012,12 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.title,
-    color: colors.primary,
-    textTransform: 'uppercase',
+    color: colors.textPrimary,
   },
   warningCard: {
-    backgroundColor: '#FFF6E8',
-    borderColor: colors.warning,
-    borderRadius: 12,
+    backgroundColor: colors.warningMuted,
+    borderColor: colors.warningMuted,
+    borderRadius: 20,
     borderWidth: 1,
     padding: spacing.md,
   },

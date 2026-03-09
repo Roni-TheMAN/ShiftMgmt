@@ -12,14 +12,18 @@ import {
 import AdminScreenContainer from '../../components/AdminScreenContainer';
 import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
+import PageHeader from '../../components/ui/PageHeader';
+import SurfaceCard from '../../components/ui/SurfaceCard';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
 import { getPayPeriodPreview } from '../../services/payroll/payPeriod';
 import {
   getNominalPayPeriodDays,
+  getPropertySettings,
   getPayrollSettings,
   PAY_PERIOD_LENGTHS,
   PAY_PERIOD_START_DAYS,
+  savePropertySettings,
   savePayrollSettings,
   supportsFirstPayrollRunDays,
   type PayPeriodLength,
@@ -34,10 +38,16 @@ type AdminSettingsScreenProps = NativeStackScreenProps<
 >;
 
 type SettingsDraft = {
+  propertyName: string;
+  propertyAddress: string;
+  propertyDetails: string;
   payPeriodLength: PayPeriodLength;
   payPeriodStartDay: PayPeriodStartDay;
   payPeriodStartDate: string;
   firstPayrollRunDaysInput: string;
+  ot1MultiplierInput: string;
+  ot2MultiplierInput: string;
+  ot2HolidayDatesInput: string;
   autoClockOutEnabled: boolean;
   autoClockOutHoursInput: string;
 };
@@ -181,6 +191,17 @@ function parsePositiveWholeNumber(value: string) {
   return parsed;
 }
 
+function parseHolidayDatesInput(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]/)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
 export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenProps) {
   const { isCompactWidth, isVeryCompactWidth } = useResponsiveLayout();
   const { markActivity } = useAdminSession();
@@ -198,18 +219,29 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
     setIsLoading(true);
     setError(null);
     try {
-      const current = await getPayrollSettings();
-      const parsedStartDate = parseIsoDateLocal(current.payPeriodStartDate);
+      const [payrollSettings, propertySettings] = await Promise.all([
+        getPayrollSettings(),
+        getPropertySettings(),
+      ]);
+      const parsedStartDate = parseIsoDateLocal(payrollSettings.payPeriodStartDate);
       setIsDateDropdownOpen(false);
       setCalendarMonthStart(toMonthStart(parsedStartDate ?? new Date()));
       setDraft({
-        autoClockOutEnabled: current.autoClockOutEnabled,
-        autoClockOutHoursInput: String(current.autoClockOutHours),
+        autoClockOutEnabled: payrollSettings.autoClockOutEnabled,
+        autoClockOutHoursInput: String(payrollSettings.autoClockOutHours),
         firstPayrollRunDaysInput:
-          current.firstPayrollRunDays === null ? '' : String(current.firstPayrollRunDays),
-        payPeriodLength: current.payPeriodLength,
-        payPeriodStartDate: current.payPeriodStartDate,
-        payPeriodStartDay: current.payPeriodStartDay,
+          payrollSettings.firstPayrollRunDays === null
+            ? ''
+            : String(payrollSettings.firstPayrollRunDays),
+        ot1MultiplierInput: String(payrollSettings.ot1Multiplier),
+        ot2HolidayDatesInput: payrollSettings.ot2HolidayDates.join('\n'),
+        ot2MultiplierInput: String(payrollSettings.ot2Multiplier),
+        payPeriodLength: payrollSettings.payPeriodLength,
+        payPeriodStartDate: payrollSettings.payPeriodStartDate,
+        payPeriodStartDay: payrollSettings.payPeriodStartDay,
+        propertyAddress: propertySettings.propertyAddress,
+        propertyDetails: propertySettings.propertyDetails,
+        propertyName: propertySettings.propertyName,
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load settings.');
@@ -252,6 +284,16 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
             ? Number.parseFloat(draft.autoClockOutHoursInput)
             : 12,
         firstPayrollRunDays,
+        ot1Multiplier:
+          Number.parseFloat(draft.ot1MultiplierInput) >= 1
+            ? Number.parseFloat(draft.ot1MultiplierInput)
+            : 1.5,
+        ot1WeeklyThresholdHours: 40,
+        ot2HolidayDates: parseHolidayDatesInput(draft.ot2HolidayDatesInput),
+        ot2Multiplier:
+          Number.parseFloat(draft.ot2MultiplierInput) >= 1
+            ? Number.parseFloat(draft.ot2MultiplierInput)
+            : 2,
         payPeriodLength: draft.payPeriodLength,
         payPeriodStartDate: draft.payPeriodStartDate,
         payPeriodStartDay: draft.payPeriodStartDay,
@@ -295,6 +337,39 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
       return;
     }
 
+    const ot1Multiplier = Number.parseFloat(draft.ot1MultiplierInput.trim());
+    if (!Number.isFinite(ot1Multiplier) || ot1Multiplier < 1) {
+      setError('OT1 multiplier must be at least 1.0.');
+      return;
+    }
+    if (ot1Multiplier > 5) {
+      setError('OT1 multiplier cannot exceed 5.0.');
+      return;
+    }
+
+    const ot2Multiplier = Number.parseFloat(draft.ot2MultiplierInput.trim());
+    if (!Number.isFinite(ot2Multiplier) || ot2Multiplier < 1) {
+      setError('OT2 multiplier must be at least 1.0.');
+      return;
+    }
+    if (ot2Multiplier > 5) {
+      setError('OT2 multiplier cannot exceed 5.0.');
+      return;
+    }
+
+    const ot2HolidayDates = parseHolidayDatesInput(draft.ot2HolidayDatesInput);
+    const invalidHolidayDate = ot2HolidayDates.find(
+      (value) => parseIsoDateLocal(value) === null,
+    );
+    if (invalidHolidayDate) {
+      setError(`Invalid holiday date: ${invalidHolidayDate}. Use YYYY-MM-DD.`);
+      return;
+    }
+    if (ot2HolidayDates.length > 366) {
+      setError('Holiday dates cannot exceed 366 entries.');
+      return;
+    }
+
     let firstPayrollRunDays: number | null = null;
     if (supportsFirstPayrollRunDays(draft.payPeriodLength)) {
       const rawValue = draft.firstPayrollRunDaysInput.trim();
@@ -314,14 +389,25 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
 
     setIsSaving(true);
     try {
-      await savePayrollSettings({
-        autoClockOutEnabled: draft.autoClockOutEnabled,
-        autoClockOutHours,
-        firstPayrollRunDays,
-        payPeriodLength: draft.payPeriodLength,
-        payPeriodStartDate: draft.payPeriodStartDate,
-        payPeriodStartDay: draft.payPeriodStartDay,
-      });
+      await Promise.all([
+        savePayrollSettings({
+          autoClockOutEnabled: draft.autoClockOutEnabled,
+          autoClockOutHours,
+          firstPayrollRunDays,
+          ot1Multiplier,
+          ot1WeeklyThresholdHours: 40,
+          ot2HolidayDates,
+          ot2Multiplier,
+          payPeriodLength: draft.payPeriodLength,
+          payPeriodStartDate: draft.payPeriodStartDate,
+          payPeriodStartDay: draft.payPeriodStartDay,
+        }),
+        savePropertySettings({
+          propertyAddress: draft.propertyAddress,
+          propertyDetails: draft.propertyDetails,
+          propertyName: draft.propertyName,
+        }),
+      ]);
       setMessage('Settings saved.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save settings.');
@@ -340,12 +426,104 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
 
   return (
     <AdminScrollContainer>
-      <Text style={styles.title}>Settings</Text>
-      <Text style={styles.subtitle}>
-        Configure payroll schedule and period boundaries for reporting.
-      </Text>
+      <PageHeader
+        actions={
+          <PrimaryButton
+            fullWidth={isCompactWidth}
+            onPress={() => {
+              markActivity();
+              navigation.navigate('AdminPayrollHours');
+            }}
+            title="View Payroll Hours"
+            variant="primary"
+          />
+        }
+        onBack={() => {
+          navigation.goBack();
+        }}
+        subtitle="Configure payroll schedule and period boundaries for reporting."
+        title="Settings"
+      />
 
-      <View style={styles.card}>
+      <SurfaceCard padding="lg" style={styles.card}>
+          <Text style={styles.sectionLabel}>Property Name</Text>
+          <TextInput
+            editable={!isSaving}
+            maxLength={120}
+            onChangeText={(value) => {
+              markActivity();
+              setError(null);
+              setMessage(null);
+              setDraft((current) =>
+                current
+                  ? {
+                      ...current,
+                      propertyName: value,
+                    }
+                  : current,
+              );
+            }}
+            placeholder="Enter property name"
+            placeholderTextColor={colors.textSecondary}
+            style={styles.input}
+            value={draft.propertyName}
+          />
+
+          <Text style={styles.sectionLabel}>Property Address</Text>
+          <TextInput
+            editable={!isSaving}
+            maxLength={240}
+            multiline
+            onChangeText={(value) => {
+              markActivity();
+              setError(null);
+              setMessage(null);
+              setDraft((current) =>
+                current
+                  ? {
+                      ...current,
+                      propertyAddress: value,
+                    }
+                  : current,
+              );
+            }}
+            placeholder="Enter property address"
+            placeholderTextColor={colors.textSecondary}
+            style={[styles.input, styles.multilineInput]}
+            textAlignVertical="top"
+            value={draft.propertyAddress}
+          />
+
+          <Text style={styles.sectionLabel}>Additional Property Details (Optional)</Text>
+          <TextInput
+            editable={!isSaving}
+            maxLength={500}
+            multiline
+            onChangeText={(value) => {
+              markActivity();
+              setError(null);
+              setMessage(null);
+              setDraft((current) =>
+                current
+                  ? {
+                      ...current,
+                      propertyDetails: value,
+                    }
+                  : current,
+              );
+            }}
+            placeholder="Office phone, gate code instructions, manager notes, etc."
+            placeholderTextColor={colors.textSecondary}
+            style={[styles.input, styles.multilineInputTall]}
+            textAlignVertical="top"
+            value={draft.propertyDetails}
+          />
+
+          <Text style={styles.helpText}>
+            Property details appear on the kiosk home screen and can help staff confirm the
+            active location.
+          </Text>
+
           <Text style={styles.sectionLabel}>Pay Period Length</Text>
           <View style={styles.optionsGrid}>
             {PAY_PERIOD_LENGTHS.map((option) => (
@@ -381,7 +559,7 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
                 }}
                 style={styles.optionButton}
                 title={PAY_PERIOD_LABELS[option]}
-                variant={draft.payPeriodLength === option ? 'primary' : 'neutral'}
+                variant={draft.payPeriodLength === option ? 'success' : 'neutral'}
               />
             ))}
           </View>
@@ -407,7 +585,7 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
                 }}
                 style={styles.optionButton}
                 title={START_DAY_LABELS[option]}
-                variant={draft.payPeriodStartDay === option ? 'primary' : 'neutral'}
+                variant={draft.payPeriodStartDay === option ? 'success' : 'neutral'}
               />
             ))}
           </View>
@@ -595,6 +773,95 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
             </Text>
           )}
 
+          <Text style={styles.sectionLabel}>Overtime Rules</Text>
+          <Text style={styles.helpText}>
+            OT1 applies to non-holiday hours above 40 per week. OT2 applies to
+            holiday dates listed below.
+          </Text>
+          <TextInput
+            editable={false}
+            style={[styles.input, styles.inputDisabled]}
+            value="OT1 Threshold: 40 hours/week (fixed)"
+          />
+
+          <Text style={styles.sectionLabel}>OT1 Multiplier</Text>
+          <TextInput
+            editable={!isSaving}
+            keyboardType="decimal-pad"
+            maxLength={5}
+            onChangeText={(value) => {
+              markActivity();
+              setError(null);
+              setMessage(null);
+              const sanitized = value.replace(/[^0-9.]/g, '');
+              setDraft((current) =>
+                current
+                  ? {
+                      ...current,
+                      ot1MultiplierInput: sanitized,
+                    }
+                  : current,
+              );
+            }}
+            placeholder="1.50"
+            placeholderTextColor={colors.textSecondary}
+            style={styles.input}
+            value={draft.ot1MultiplierInput}
+          />
+
+          <Text style={styles.sectionLabel}>OT2 Multiplier</Text>
+          <TextInput
+            editable={!isSaving}
+            keyboardType="decimal-pad"
+            maxLength={5}
+            onChangeText={(value) => {
+              markActivity();
+              setError(null);
+              setMessage(null);
+              const sanitized = value.replace(/[^0-9.]/g, '');
+              setDraft((current) =>
+                current
+                  ? {
+                      ...current,
+                      ot2MultiplierInput: sanitized,
+                    }
+                  : current,
+              );
+            }}
+            placeholder="2.00"
+            placeholderTextColor={colors.textSecondary}
+            style={styles.input}
+            value={draft.ot2MultiplierInput}
+          />
+
+          <Text style={styles.sectionLabel}>OT2 Holiday Dates (YYYY-MM-DD)</Text>
+          <Text style={styles.helpText}>
+            Enter one date per line or separate dates with commas.
+          </Text>
+          <TextInput
+            editable={!isSaving}
+            maxLength={5000}
+            multiline
+            onChangeText={(value) => {
+              markActivity();
+              setError(null);
+              setMessage(null);
+              setDraft((current) =>
+                current
+                  ? {
+                      ...current,
+                      ot2HolidayDatesInput: value,
+                    }
+                  : current,
+              );
+            }}
+            placeholder={`2026-01-01\n2026-12-25`}
+            placeholderTextColor={colors.textSecondary}
+            style={[styles.input, styles.multilineInputTall]}
+            textAlignVertical="top"
+            value={draft.ot2HolidayDatesInput}
+          />
+
           <Text style={styles.sectionLabel}>Auto Clock-Out</Text>
           <View style={styles.inlineActions}>
             <PrimaryButton
@@ -696,18 +963,6 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
           {message ? <Text style={styles.messageText}>{message}</Text> : null}
 
-          <View style={styles.utilityActions}>
-            <PrimaryButton
-              fullWidth={isCompactWidth}
-              onPress={() => {
-                markActivity();
-                navigation.navigate('AdminPayrollHours');
-              }}
-              title="View Payroll Hours"
-              variant="primary"
-            />
-          </View>
-
           <View
             style={[
               styles.actions,
@@ -735,7 +990,7 @@ export default function AdminSettingsScreen({ navigation }: AdminSettingsScreenP
               variant="neutral"
             />
           </View>
-      </View>
+      </SurfaceCard>
     </AdminScrollContainer>
   );
 }
@@ -754,13 +1009,7 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
   },
   card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginTop: spacing.lg,
     maxWidth: 920,
-    padding: spacing.lg,
     width: '100%',
   },
   compactActionButton: {
@@ -772,9 +1021,9 @@ const styles = StyleSheet.create({
   },
   calendarDayCell: {
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 14,
     justifyContent: 'center',
-    minHeight: 32,
+    minHeight: 40,
     paddingVertical: spacing.xs,
     width: '14.2857%',
   },
@@ -813,16 +1062,16 @@ const styles = StyleSheet.create({
   calendarHeaderLabel: {
     ...typography.h2,
     color: colors.textPrimary,
-    textTransform: 'uppercase',
   },
   calendarNavButton: {
     alignItems: 'center',
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    height: 30,
+    height: 38,
     justifyContent: 'center',
-    width: 30,
+    width: 38,
   },
   calendarNavButtonText: {
     ...typography.h2,
@@ -849,17 +1098,18 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   dateDropdownPanel: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceElevated,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 20,
     borderWidth: 1,
     marginTop: spacing.sm,
     overflow: 'hidden',
+    padding: spacing.md,
   },
   dateDropdownTrigger: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.input,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 18,
     borderWidth: 1,
     marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
@@ -876,7 +1126,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   helpText: {
-    ...typography.caption,
+    ...typography.body,
     color: colors.textSecondary,
     marginTop: spacing.sm,
   },
@@ -888,14 +1138,24 @@ const styles = StyleSheet.create({
   },
   input: {
     ...typography.body,
-    backgroundColor: colors.white,
+    backgroundColor: colors.input,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
     color: colors.textPrimary,
     marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  inputDisabled: {
+    color: colors.textSecondary,
+    opacity: 0.85,
+  },
+  multilineInput: {
+    minHeight: 72,
+  },
+  multilineInputTall: {
+    minHeight: 110,
   },
   messageText: {
     ...typography.label,
@@ -913,9 +1173,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   previewCard: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.surfaceElevated,
     borderColor: colors.border,
-    borderRadius: 12,
+    borderRadius: 20,
     borderWidth: 1,
     marginTop: spacing.lg,
     padding: spacing.md,
@@ -932,7 +1192,7 @@ const styles = StyleSheet.create({
   },
   previewTitle: {
     ...typography.h2,
-    color: colors.primary,
+    color: colors.textPrimary,
   },
   previewValue: {
     color: colors.textPrimary,
@@ -950,11 +1210,6 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.title,
-    color: colors.primary,
-    textTransform: 'uppercase',
-  },
-  utilityActions: {
-    alignSelf: 'stretch',
-    marginTop: spacing.lg,
+    color: colors.textPrimary,
   },
 });

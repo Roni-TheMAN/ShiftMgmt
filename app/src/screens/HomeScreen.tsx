@@ -11,11 +11,13 @@ import {
   Vibration,
   View,
 } from 'react-native';
-import AppClock from '../components/AppClock';
 import NumericKeypad from '../components/NumericKeypad';
 import PinDots from '../components/PinDots';
 import PrimaryButton from '../components/PrimaryButton';
 import ScreenContainer from '../components/ScreenContainer';
+import PageHeader from '../components/ui/PageHeader';
+import StatusChip from '../components/ui/StatusChip';
+import SurfaceCard from '../components/ui/SurfaceCard';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
 import {
   APP_NAME,
@@ -28,6 +30,7 @@ import {
   getLatestClockEventTypeForEmployee,
 } from '../services/repositories/clockEventRepository';
 import { findActiveEmployeeByPin } from '../services/repositories/employeeRepository';
+import { getPropertySettings } from '../services/repositories/settingsRepository';
 import { colors, spacing, typography } from '../theme';
 import type { RootStackParamList } from '../types/navigation';
 
@@ -37,68 +40,30 @@ type StatusTone = 'neutral' | 'success' | 'warning' | 'danger';
 const ADMIN_HOLD_DURATION_MS = 3000;
 const ADMIN_HOLD_TICK_MS = 40;
 const CLOCK_ACTIONS = [
-  { eventType: 'IN' as const, title: 'CLOCK IN', variant: 'success' as const },
-  { eventType: 'OUT' as const, title: 'CLOCK OUT', variant: 'danger' as const },
+  { eventType: 'IN' as const, title: 'Clock In', variant: 'success' as const },
+  { eventType: 'OUT' as const, title: 'Clock Out', variant: 'danger' as const },
 ];
 
-function getStatusCardToneStyle(tone: StatusTone) {
-  switch (tone) {
-    case 'success':
-      return styles.statusCardSuccess;
-    case 'warning':
-      return styles.statusCardWarning;
-    case 'danger':
-      return styles.statusCardDanger;
-    default:
-      return null;
+function toChipTone(tone: StatusTone) {
+  if (tone === 'success') {
+    return 'success' as const;
   }
-}
-
-function getStatusValueToneStyle(tone: StatusTone) {
-  switch (tone) {
-    case 'success':
-      return styles.statusCardValueSuccess;
-    case 'warning':
-      return styles.statusCardValueWarning;
-    case 'danger':
-      return styles.statusCardValueDanger;
-    default:
-      return null;
+  if (tone === 'warning') {
+    return 'warning' as const;
   }
-}
-
-function getStatusBadgeToneStyle(tone: StatusTone) {
-  switch (tone) {
-    case 'success':
-      return styles.statusBadgeSuccess;
-    case 'warning':
-      return styles.statusBadgeWarning;
-    case 'danger':
-      return styles.statusBadgeDanger;
-    default:
-      return styles.statusBadgeNeutral;
+  if (tone === 'danger') {
+    return 'danger' as const;
   }
-}
-
-function getStatusBadgeTextToneStyle(tone: StatusTone) {
-  switch (tone) {
-    case 'success':
-      return styles.statusBadgeTextSuccess;
-    case 'warning':
-      return styles.statusBadgeTextWarning;
-    case 'danger':
-      return styles.statusBadgeTextDanger;
-    default:
-      return styles.statusBadgeTextNeutral;
-  }
+  return 'neutral' as const;
 }
 
 export default function HomeScreen({ navigation }: HomeScreenProps) {
-  const { horizontalPadding, isCompactWidth, isShortHeight, isVeryCompactWidth } =
-    useResponsiveLayout();
+  const { horizontalPadding, isCompactWidth, isShortHeight } = useResponsiveLayout();
   const isFocused = useIsFocused();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [now, setNow] = useState(() => new Date());
   const [pin, setPin] = useState('');
+  const [propertyName, setPropertyName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isHoldingAdmin, setIsHoldingAdmin] = useState(false);
@@ -115,12 +80,21 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     Math.ceil(((1 - adminHoldProgress) * ADMIN_HOLD_DURATION_MS) / 1000),
   );
   const digitsRemaining = Math.max(0, EMPLOYEE_PIN_LENGTH - pin.length);
-  const useHorizontalActions = isCompactWidth && !isVeryCompactWidth;
+  const timeLineValue = useMemo(
+    () =>
+      now.toLocaleString([], {
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        month: 'short',
+      }),
+    [now],
+  );
 
   const cameraStatus = useMemo(() => {
     if (!cameraPermission) {
       return {
-        detail: 'Preparing live camera access',
+        detail: 'Preparing live camera access.',
         label: 'Checking',
         tone: 'warning' as const,
       };
@@ -128,7 +102,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
 
     if (!cameraPermission.granted) {
       return {
-        detail: 'Permission is required for shift photos',
+        detail: 'Permission is required for shift photos.',
         label: 'Blocked',
         tone: 'danger' as const,
       };
@@ -136,45 +110,21 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
 
     if (!isFocused) {
       return {
-        detail: 'Preview resumes when this screen is active',
+        detail: 'Preview resumes when this screen is active.',
         label: 'Standby',
         tone: 'neutral' as const,
       };
     }
 
     return {
-      detail: 'Front camera preview is running',
+      detail: 'Front camera preview is running.',
       label: 'Live',
       tone: 'success' as const,
     };
   }, [cameraPermission, isFocused]);
 
-  const heroMessage = useMemo(() => {
-    if (error) {
-      return error;
-    }
-
-    if (canSubmit) {
-      return 'PIN accepted. Choose Clock In or Clock Out while facing the camera.';
-    }
-
-    if (pin.length > 0) {
-      return `Enter ${digitsRemaining} more digit${
-        digitsRemaining === 1 ? '' : 's'
-      } to continue.`;
-    }
-
-    return 'Employees can enter a PIN, confirm identity on camera, and clock in within seconds.';
-  }, [canSubmit, digitsRemaining, error, pin.length]);
-
   const pinStatusValue =
-    pin.length === 0 ? 'Awaiting entry' : canSubmit ? 'Ready' : `${pin.length}/4 digits`;
-  const pinStatusDetail =
-    pin.length === 0
-      ? 'A 4-digit employee PIN is required'
-      : canSubmit
-        ? 'Clock action buttons are enabled'
-        : `${digitsRemaining} digit${digitsRemaining === 1 ? '' : 's'} remaining`;
+    pin.length === 0 ? 'Awaiting entry' : canSubmit ? 'Ready to submit' : `${pin.length}/4 digits`;
   const nextStepValue = error
     ? 'Re-enter PIN'
     : canSubmit
@@ -182,48 +132,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
       : pin.length === 0
         ? 'Enter PIN'
         : `Add ${digitsRemaining} digit${digitsRemaining === 1 ? '' : 's'}`;
-  const nextStepDetail = error
-    ? 'Clear the error and try the PIN again'
-    : canSubmit
-      ? 'Keep your face in frame for the capture'
-      : 'Action buttons unlock automatically when the PIN is complete';
-  const adminStatusValue = isHoldingAdmin
-    ? `${adminSecondsRemaining}s remaining`
-    : 'Hold brand card';
-  const statusCards = [
-    {
-      detail: cameraStatus.detail,
-      key: 'camera',
-      label: 'Camera',
-      tone: cameraStatus.tone,
-      value: cameraStatus.label,
-    },
-    {
-      detail: pinStatusDetail,
-      key: 'pin',
-      label: 'PIN',
-      tone: canSubmit ? ('success' as const) : ('neutral' as const),
-      value: pinStatusValue,
-    },
-    {
-      detail: nextStepDetail,
-      key: 'next-step',
-      label: 'Next Step',
-      tone: error
-        ? ('danger' as const)
-        : canSubmit
-          ? ('warning' as const)
-          : ('neutral' as const),
-      value: nextStepValue,
-    },
-    {
-      detail: 'Press and hold the brand card to open admin access',
-      key: 'admin',
-      label: 'Admin',
-      tone: isHoldingAdmin ? ('warning' as const) : ('neutral' as const),
-      value: adminStatusValue,
-    },
-  ];
+  const propertyNameLabel = propertyName.trim().length > 0 ? propertyName.trim() : 'Property';
 
   const stopAdminHoldTimer = (resetProgress = true) => {
     if (adminHoldTimerRef.current) {
@@ -267,9 +176,19 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     }
   }, [cameraPermission, requestCameraPermission]);
 
+  useEffect(() => {
+    const timerRef = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+    return () => {
+      clearInterval(timerRef);
+    };
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       let intervalRef: ReturnType<typeof setInterval> | null = null;
+      let isActive = true;
 
       const runSweep = async () => {
         try {
@@ -279,12 +198,29 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         }
       };
 
+      const loadPropertyProfile = async () => {
+        try {
+          const propertySettings = await getPropertySettings();
+          if (!isActive) {
+            return;
+          }
+          setPropertyName(propertySettings.propertyName);
+        } catch {
+          if (!isActive) {
+            return;
+          }
+          setPropertyName('');
+        }
+      };
+
+      void loadPropertyProfile();
       void runSweep();
       intervalRef = setInterval(() => {
         void runSweep();
       }, AUTO_CLOCK_OUT_SWEEP_INTERVAL_MS);
 
       return () => {
+        isActive = false;
         if (intervalRef) {
           clearInterval(intervalRef);
         }
@@ -364,214 +300,140 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         contentContainerStyle={[styles.content, { paddingHorizontal: horizontalPadding }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.heroRow, isCompactWidth ? styles.heroRowCompact : null]}>
-          <View style={styles.heroColumn}>
-            <Pressable
-              delayLongPress={ADMIN_HOLD_DURATION_MS}
-              onLongPress={() => {
-                setAdminHoldProgress(1);
-                stopAdminHoldTimer(false);
-                Vibration.vibrate(18);
-                setError(null);
-                setPin('');
-                navigation.navigate('AdminAuth');
-              }}
-              onPressIn={() => {
-                startAdminHoldTimer();
-              }}
-              onPressOut={() => {
-                if (adminHoldProgress < 1) {
-                  stopAdminHoldTimer();
-                }
-              }}
-              style={({ pressed }) => [
-                styles.brandCard,
-                isCompactWidth ? styles.brandCardCompact : null,
-                pressed ? styles.brandCardPressed : null,
-              ]}
-            >
-              <View style={styles.brandCardHeader}>
-                <Text style={styles.brandEyebrow}>Shift kiosk</Text>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    getStatusBadgeToneStyle(cameraStatus.tone),
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.statusBadgeText,
-                      getStatusBadgeTextToneStyle(cameraStatus.tone),
-                    ]}
-                  >
-                    {cameraStatus.label}
-                  </Text>
-                </View>
-              </View>
+        <PageHeader
+          badgeLabel={cameraStatus.label}
+          badgeTone={toChipTone(cameraStatus.tone)}
+          eyebrow="Shift kiosk"
+          title={APP_NAME}
+        />
 
-              <Text style={styles.logoTitle}>{APP_NAME}</Text>
-              <Text style={styles.heroMessage}>{heroMessage}</Text>
-              <Text style={styles.logoHint}>
-                {isHoldingAdmin
-                  ? `Keep holding... ${adminSecondsRemaining}s`
-                  : 'Press and hold the brand card for Admin access'}
-              </Text>
-              <View style={styles.holdProgressTrack}>
+        <SurfaceCard padding="lg" style={styles.controlDeck} tone="default">
+          <View style={[styles.controlDeckHeader, isCompactWidth ? styles.controlDeckHeaderCompact : null]}>
+            <View style={styles.controlDeckHeaderLead}>
+              <Text style={styles.controlDeckEyebrow}>One workspace</Text>
+              <Pressable
+                delayLongPress={ADMIN_HOLD_DURATION_MS}
+                onLongPress={() => {
+                  setAdminHoldProgress(1);
+                  stopAdminHoldTimer(false);
+                  Vibration.vibrate(18);
+                  setError(null);
+                  setPin('');
+                  navigation.navigate('AdminAuth');
+                }}
+                onPressIn={() => {
+                  startAdminHoldTimer();
+                }}
+                onPressOut={() => {
+                  if (adminHoldProgress < 1) {
+                    stopAdminHoldTimer();
+                  }
+                }}
+                style={({ pressed }) => [styles.timeLineRow, pressed ? styles.timeLineRowPressed : null]}
+              >
+                <Text numberOfLines={1} style={styles.timeLineText}>
+                  {timeLineValue}{' '}
+                  <Text style={styles.timeLineHint}>
+                    {isHoldingAdmin ? `(${adminSecondsRemaining}s)` : '(Hold for Admin)'}
+                  </Text>
+                </Text>
+              </Pressable>
+              <View style={styles.timeLineProgressTrack}>
                 <View
                   style={[
-                    styles.holdProgressFill,
-                    isCompactWidth ? styles.holdProgressFillCompact : null,
+                    styles.timeLineProgressFill,
                     {
                       width: `${Math.max(0, Math.min(100, adminHoldProgress * 100))}%`,
                     },
                   ]}
                 />
               </View>
-            </Pressable>
-
-            <View style={styles.clockPanel}>
-              <AppClock />
             </View>
-
-            <View style={[styles.statusGrid, isCompactWidth ? styles.statusGridCompact : null]}>
-              {statusCards.map((card) => (
-                <View
-                  key={card.key}
-                  style={[
-                    styles.statusCard,
-                    isCompactWidth ? styles.statusCardCompact : null,
-                    getStatusCardToneStyle(card.tone),
-                  ]}
-                >
-                  <Text style={styles.statusCardLabel}>{card.label}</Text>
-                  <Text
-                    style={[
-                      styles.statusCardValue,
-                      getStatusValueToneStyle(card.tone),
-                    ]}
-                  >
-                    {card.value}
-                  </Text>
-                  <Text style={styles.statusCardDetail}>{card.detail}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          <View style={[styles.cameraPanel, isCompactWidth ? styles.cameraPanelCompact : null]}>
-            <View style={styles.cameraPanelHeader}>
-              <View style={styles.cameraHeaderTextWrap}>
-                <Text style={styles.cameraPanelEyebrow}>Live Preview</Text>
-                <Text style={styles.cameraPanelTitle}>Front Camera Feed</Text>
-              </View>
-              <View
-                style={[
-                  styles.statusBadge,
-                  getStatusBadgeToneStyle(cameraStatus.tone),
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusBadgeText,
-                    getStatusBadgeTextToneStyle(cameraStatus.tone),
-                  ]}
-                >
-                  {cameraStatus.label}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.cameraPreviewShell,
-                isCompactWidth ? styles.cameraPreviewShellCompact : null,
-                isShortHeight ? styles.cameraPreviewShellShort : null,
-              ]}
-            >
-              {!cameraPermission ? (
-                <View style={styles.cameraPlaceholder}>
-                  <ActivityIndicator color={colors.primary} size="small" />
-                  <Text style={styles.cameraPlaceholderText}>
-                    Checking camera access...
-                  </Text>
-                </View>
-              ) : cameraPermission.granted ? (
-                <CameraView
-                  active={isFocused}
-                  animateShutter={false}
-                  facing="front"
-                  mirror
-                  mode="picture"
-                  style={styles.cameraPreview}
-                />
-              ) : (
-                <View style={styles.cameraPlaceholder}>
-                  <Text style={styles.cameraPlaceholderTitle}>Camera Off</Text>
-                  <Text style={styles.cameraPlaceholderText}>
-                    Grant camera access to capture shift photos.
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            <Text style={styles.cameraPanelHint}>
-              Stand in frame before you choose Clock In or Clock Out.
-            </Text>
-          </View>
-        </View>
-
-        <View style={[styles.mainRow, isCompactWidth ? styles.mainRowCompact : null]}>
-          <View style={styles.pinColumn}>
-            <Text style={styles.sectionLabel}>Enter PIN</Text>
-            <Text style={styles.sectionSupportText}>{nextStepValue}</Text>
-            <PinDots length={pin.length} maxLength={EMPLOYEE_PIN_LENGTH} />
-
-            <Text style={[styles.errorText, !error ? styles.errorTextHidden : null]}>
-              {error ?? ' '}
-            </Text>
-
-            <View
-              style={[styles.keypadWrapper, isCompactWidth ? styles.keypadWrapperCompact : null]}
-            >
-              <NumericKeypad
-                disabled={isSubmitting}
-                onBackspace={backspacePin}
-                onClear={clearPin}
-                onDigitPress={appendDigit}
-              />
-            </View>
-          </View>
-
-          <View style={[styles.actionsColumn, isCompactWidth ? styles.actionsColumnCompact : null]}>
-            <View style={styles.actionsHeader}>
-              <Text style={styles.sectionLabel}>Choose Action</Text>
-              <Text style={styles.sectionSupportText}>
-                {canSubmit
-                  ? 'Buttons are enabled. Keep your face in view for capture.'
-                  : 'Finish the 4-digit PIN to unlock clock actions.'}
+            <View style={[styles.controlDeckPropertyWrap, isCompactWidth ? styles.controlDeckPropertyWrapCompact : null]}>
+              <Text style={styles.controlDeckPropertyLabel}>Property</Text>
+              <Text numberOfLines={1} style={styles.controlDeckPropertyName}>
+                {propertyNameLabel}
               </Text>
             </View>
+            <StatusChip label={canSubmit ? 'Ready' : 'Awaiting PIN'} tone={canSubmit ? 'success' : 'neutral'} />
+          </View>
 
-            <View
-              style={[
-                styles.actionButtonGroup,
-                useHorizontalActions ? styles.actionButtonGroupHorizontal : null,
-              ]}
-            >
-              {CLOCK_ACTIONS.map((action) => (
-                <PrimaryButton
-                  disabled={!canSubmit}
-                  fullWidth={!useHorizontalActions}
-                  key={action.eventType}
-                  onPress={() => void processClockAction(action.eventType)}
-                  style={useHorizontalActions ? styles.compactActionButton : undefined}
-                  title={isSubmitting ? 'PROCESSING...' : action.title}
-                  variant={action.variant}
-                />
-              ))}
+          <View
+            style={[styles.controlDeckBody, isCompactWidth ? styles.controlDeckBodyCompact : null]}
+          >
+            <View style={[styles.lowerControlRow, isCompactWidth ? styles.controlRowCompact : null]}>
+              <SurfaceCard padding="md" style={styles.keypadPanel} tone="default">
+                <View style={styles.keypadHeader}>
+                  <View>
+                    <Text style={styles.sectionLabel}>Enter PIN</Text>
+                    <Text style={styles.sectionSupportText}>{nextStepValue}</Text>
+                  </View>
+                  <StatusChip label={pinStatusValue} tone={canSubmit ? 'success' : 'neutral'} />
+                </View>
+
+                <PinDots length={pin.length} maxLength={EMPLOYEE_PIN_LENGTH} />
+
+                <Text style={[styles.errorText, !error ? styles.errorTextHidden : null]}>
+                  {error ?? ' '}
+                </Text>
+
+                <View style={styles.keypadWrapper}>
+                  <NumericKeypad
+                    disabled={isSubmitting}
+                    onBackspace={backspacePin}
+                    onClear={clearPin}
+                    onDigitPress={appendDigit}
+                  />
+                </View>
+              </SurfaceCard>
+
+              <SurfaceCard padding="md" style={styles.actionsColumn} tone="default">
+                <Text style={styles.sectionLabel}>Choose Action</Text>
+
+                <View
+                  style={[
+                    styles.inlineCameraShell,
+                    isShortHeight ? styles.inlineCameraShellShort : null,
+                  ]}
+                >
+                  {!cameraPermission ? (
+                    <View style={styles.cameraPlaceholder}>
+                      <ActivityIndicator color={colors.primary} size="small" />
+                      <Text style={styles.cameraPlaceholderText}>Checking camera...</Text>
+                    </View>
+                  ) : cameraPermission.granted ? (
+                    <CameraView
+                      active={isFocused}
+                      animateShutter={false}
+                      facing="front"
+                      mirror
+                      mode="picture"
+                      style={styles.cameraPreview}
+                    />
+                  ) : (
+                    <View style={styles.cameraPlaceholder}>
+                      <Text style={styles.cameraPlaceholderTitle}>Camera off</Text>
+                      <Text style={styles.cameraPlaceholderText}>Enable camera access.</Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.actionButtonGroup}>
+                  {CLOCK_ACTIONS.map((action) => (
+                    <PrimaryButton
+                      disabled={!canSubmit}
+                      fullWidth
+                      key={action.eventType}
+                      onPress={() => void processClockAction(action.eventType)}
+                      title={isSubmitting ? 'Processing...' : action.title}
+                      variant={action.variant}
+                    />
+                  ))}
+                </View>
+              </SurfaceCard>
             </View>
           </View>
-        </View>
+        </SurfaceCard>
       </ScrollView>
     </ScreenContainer>
   );
@@ -579,100 +441,20 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
 
 const styles = StyleSheet.create({
   actionButtonGroup: {
-    gap: spacing.lg,
+    gap: spacing.sm,
+    marginTop: spacing.sm,
     width: '100%',
-  },
-  actionButtonGroupHorizontal: {
-    flexDirection: 'row',
   },
   actionsColumn: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: spacing.lg,
-    justifyContent: 'center',
-    padding: spacing.lg,
-    width: '34%',
-  },
-  actionsColumnCompact: {
-    width: '100%',
-  },
-  actionsHeader: {
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  brandCard: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 22,
-    borderWidth: 1,
-    padding: spacing.lg,
-  },
-  brandCardCompact: {
-    padding: spacing.md,
-  },
-  brandCardHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
+    flexShrink: 0,
     justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  brandCardPressed: {
-    backgroundColor: '#DCE0DE',
-  },
-  brandEyebrow: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  cameraHeaderTextWrap: {
-    flex: 1,
-    marginRight: spacing.sm,
-  },
-  cameraPanel: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 22,
-    borderWidth: 1,
-    flexShrink: 1,
-    maxWidth: 440,
-    minWidth: 300,
-    padding: spacing.lg,
-    width: '38%',
-  },
-  cameraPanelCompact: {
-    maxWidth: '100%',
-    minWidth: 0,
-    width: '100%',
-  },
-  cameraPanelEyebrow: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  cameraPanelHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  cameraPanelHint: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
-  cameraPanelTitle: {
-    ...typography.h2,
-    color: colors.textPrimary,
-    marginTop: spacing.xs,
+    maxWidth: 340,
+    minWidth: 220,
+    width: '35%',
   },
   cameraPlaceholder: {
     alignItems: 'center',
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceMuted,
     flex: 1,
     gap: spacing.sm,
     justifyContent: 'center',
@@ -686,45 +468,78 @@ const styles = StyleSheet.create({
   cameraPlaceholderTitle: {
     ...typography.h2,
     color: colors.textPrimary,
-    textTransform: 'uppercase',
   },
   cameraPreview: {
     flex: 1,
   },
-  cameraPreviewShell: {
-    backgroundColor: colors.white,
+  inlineCameraShell: {
+    backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
-    minHeight: 360,
+    flex: 1,
+    marginTop: spacing.sm,
+    minHeight: 96,
     overflow: 'hidden',
     width: '100%',
   },
-  cameraPreviewShellCompact: {
-    minHeight: 280,
-  },
-  cameraPreviewShellShort: {
-    minHeight: 250,
-  },
-  clockPanel: {
-    backgroundColor: colors.white,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-  },
-  compactActionButton: {
-    flex: 1,
+  inlineCameraShellShort: {
+    minHeight: 80,
   },
   container: {
     flex: 1,
   },
   content: {
     flexGrow: 1,
-    gap: spacing.lg,
-    paddingBottom: spacing.xl,
+    gap: spacing.md,
+    paddingBottom: spacing.lg,
     paddingTop: spacing.md,
+  },
+  controlDeck: {
+    minHeight: 0,
+  },
+  controlDeckBody: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    minHeight: 0,
+  },
+  controlDeckBodyCompact: {},
+  controlDeckEyebrow: {
+    ...typography.eyebrow,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+  },
+  controlDeckHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+  },
+  controlDeckHeaderCompact: {
+    alignItems: 'flex-start',
+    flexDirection: 'column',
+  },
+  controlDeckHeaderLead: {
+    flexShrink: 1,
+  },
+  controlDeckPropertyLabel: {
+    ...typography.eyebrow,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+  },
+  controlDeckPropertyName: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+  },
+  controlDeckPropertyWrap: {
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
+  controlDeckPropertyWrapCompact: {
+    alignItems: 'flex-start',
+    width: '100%',
   },
   errorText: {
     ...typography.label,
@@ -735,183 +550,75 @@ const styles = StyleSheet.create({
   errorTextHidden: {
     color: 'transparent',
   },
-  heroColumn: {
-    flex: 1,
-    gap: spacing.lg,
+  timeLineHint: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
-  heroMessage: {
-    ...typography.body,
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-  },
-  heroRow: {
-    alignItems: 'stretch',
-    flexDirection: 'row',
-    gap: spacing.lg,
-    justifyContent: 'space-between',
-  },
-  heroRowCompact: {
-    flexDirection: 'column',
-  },
-  holdProgressFill: {
+  timeLineProgressFill: {
     backgroundColor: colors.primary,
     borderRadius: 999,
     height: '100%',
   },
-  holdProgressFillCompact: {
-    minWidth: 2,
-  },
-  holdProgressTrack: {
+  timeLineProgressTrack: {
     backgroundColor: colors.border,
     borderRadius: 999,
-    height: 8,
-    marginTop: spacing.sm,
+    height: 4,
+    marginTop: spacing.xs,
     overflow: 'hidden',
     width: '100%',
   },
+  timeLineRow: {
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    paddingBottom: spacing.xs,
+    paddingTop: spacing.xs,
+  },
+  timeLineRowPressed: {
+    opacity: 0.8,
+  },
+  timeLineText: {
+    ...typography.h2,
+    color: colors.textPrimary,
+  },
+  keypadHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  keypadPanel: {
+    flex: 1,
+    minHeight: 0,
+  },
   keypadWrapper: {
-    maxWidth: 420,
+    marginTop: spacing.sm,
     width: '100%',
   },
-  keypadWrapperCompact: {
-    maxWidth: '100%',
-  },
-  logoHint: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  logoTitle: {
-    ...typography.title,
-    color: colors.primary,
-    marginBottom: spacing.sm,
-    textTransform: 'uppercase',
-  },
-  mainRow: {
+  lowerControlRow: {
     alignItems: 'stretch',
     flexDirection: 'row',
-    gap: spacing.lg,
-    justifyContent: 'space-between',
+    gap: spacing.sm,
   },
-  mainRowCompact: {
-    flexDirection: 'column',
+  panelEyebrow: {
+    ...typography.eyebrow,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
   },
-  pinColumn: {
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    flex: 1,
-    gap: spacing.md,
-    justifyContent: 'center',
-    padding: spacing.lg,
+  panelTitle: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
   },
   sectionLabel: {
     ...typography.h2,
     color: colors.textPrimary,
-    textAlign: 'center',
-    textTransform: 'uppercase',
   },
   sectionSupportText: {
-    ...typography.caption,
+    ...typography.body,
     color: colors.textSecondary,
-    marginTop: -spacing.xs,
-    textAlign: 'center',
+    marginTop: spacing.xs,
   },
-  statusBadge: {
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  statusBadgeDanger: {
-    backgroundColor: '#F8EAEA',
-    borderColor: colors.danger,
-  },
-  statusBadgeNeutral: {
-    backgroundColor: colors.white,
-    borderColor: colors.border,
-  },
-  statusBadgeSuccess: {
-    backgroundColor: '#EDF4EF',
-    borderColor: colors.success,
-  },
-  statusBadgeText: {
-    ...typography.caption,
-    textTransform: 'uppercase',
-  },
-  statusBadgeTextDanger: {
-    color: colors.danger,
-  },
-  statusBadgeTextNeutral: {
-    color: colors.textSecondary,
-  },
-  statusBadgeTextSuccess: {
-    color: colors.success,
-  },
-  statusBadgeTextWarning: {
-    color: colors.warning,
-  },
-  statusBadgeWarning: {
-    backgroundColor: '#FBF4E8',
-    borderColor: colors.warning,
-  },
-  statusCard: {
-    backgroundColor: colors.white,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
-    flexBasis: 220,
-    flexGrow: 1,
-    minHeight: 120,
-    padding: spacing.md,
-  },
-  statusCardCompact: {
-    flexBasis: '100%',
-  },
-  statusCardDanger: {
-    backgroundColor: '#F8EAEA',
-    borderColor: colors.danger,
-  },
-  statusCardDetail: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
-  statusCardLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  statusCardSuccess: {
-    backgroundColor: '#EDF4EF',
-    borderColor: colors.success,
-  },
-  statusCardValue: {
-    ...typography.h2,
-    color: colors.textPrimary,
-    marginTop: spacing.sm,
-  },
-  statusCardValueDanger: {
-    color: colors.danger,
-  },
-  statusCardValueSuccess: {
-    color: colors.success,
-  },
-  statusCardValueWarning: {
-    color: colors.warning,
-  },
-  statusCardWarning: {
-    backgroundColor: '#FBF4E8',
-    borderColor: colors.warning,
-  },
-  statusGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
-  },
-  statusGridCompact: {
+  controlRowCompact: {
     flexDirection: 'column',
   },
 });

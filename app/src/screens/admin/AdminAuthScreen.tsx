@@ -5,6 +5,8 @@ import NumericKeypad from '../../components/NumericKeypad';
 import PinDots from '../../components/PinDots';
 import PrimaryButton from '../../components/PrimaryButton';
 import ScreenContainer from '../../components/ScreenContainer';
+import PageHeader from '../../components/ui/PageHeader';
+import SurfaceCard from '../../components/ui/SurfaceCard';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
 import { ADMIN_PIN_LENGTH } from '../../constants/app';
@@ -85,50 +87,63 @@ export default function AdminAuthScreen({ navigation }: AdminAuthScreenProps) {
 
   return (
     <ScreenContainer style={[styles.container, { paddingHorizontal: horizontalPadding }]}>
-      <View style={[styles.card, isCompactWidth ? styles.cardCompact : null]}>
-        <Text style={styles.title}>Admin Access</Text>
-        <Text style={styles.subtitle}>Enter the 4-digit Admin PIN</Text>
+      <View style={styles.shell}>
+        <PageHeader
+          onBack={() => {
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Home' }],
+            });
+          }}
+          subtitle="Enter the 4-digit admin PIN to manage employees, settings, and payroll data."
+          title="Admin Access"
+        />
 
-        <PinDots length={pin.length} maxLength={ADMIN_PIN_LENGTH} />
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        <SurfaceCard padding="lg" style={[styles.card, isCompactWidth ? styles.cardCompact : null]}>
+          <Text style={styles.sectionTitle}>Enter Admin PIN</Text>
+          <Text style={styles.sectionSubtitle}>Authentication is required for kiosk controls.</Text>
 
-        <View style={styles.keypadWrapper}>
-          <NumericKeypad
-            disabled={isSubmitting}
-            onBackspace={backspacePin}
-            onClear={clearPin}
-            onDigitPress={appendDigit}
-          />
-        </View>
+          <PinDots length={pin.length} maxLength={ADMIN_PIN_LENGTH} />
+          <Text style={[styles.errorText, !error ? styles.errorHidden : null]}>{error ?? ' '}</Text>
 
-        <View
-          style={[
-            styles.actions,
-            isCompactWidth ? styles.actionsCompact : null,
-            isVeryCompactWidth ? styles.actionsStacked : null,
-          ]}
-        >
-          <PrimaryButton
-            disabled={!canSubmit}
-            fullWidth={isVeryCompactWidth}
-            onPress={() => void submitAdminPin()}
-            style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-            title={isSubmitting ? 'VERIFYING...' : 'Enter Admin'}
-            variant="primary"
-          />
-          <PrimaryButton
-            fullWidth={isVeryCompactWidth}
-            onPress={() => {
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Home' }],
-              });
-            }}
-            style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-            title="Cancel"
-            variant="neutral"
-          />
-        </View>
+          <View style={styles.keypadWrapper}>
+            <NumericKeypad
+              disabled={isSubmitting}
+              onBackspace={backspacePin}
+              onClear={clearPin}
+              onDigitPress={appendDigit}
+            />
+          </View>
+
+          <View
+            style={[
+              styles.actions,
+              isCompactWidth ? styles.actionsCompact : null,
+              isVeryCompactWidth ? styles.actionsStacked : null,
+            ]}
+          >
+            <PrimaryButton
+              disabled={!canSubmit}
+              fullWidth={isVeryCompactWidth}
+              onPress={() => void submitAdminPin()}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title={isSubmitting ? 'Verifying...' : 'Enter Admin'}
+              variant="success"
+            />
+            <PrimaryButton
+              fullWidth={isVeryCompactWidth}
+              onPress={() => {
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Home' }],
+                });
+              }}
+              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+              title="Cancel"
+              variant="neutral"
+            />
+          </View>
+        </SurfaceCard>
       </View>
     </ScreenContainer>
   );
@@ -149,13 +164,7 @@ const styles = StyleSheet.create({
   },
   card: {
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
     maxWidth: 640,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xl,
     width: '100%',
   },
   cardCompact: {
@@ -165,9 +174,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   container: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  errorHidden: {
+    color: 'transparent',
   },
   errorText: {
     ...typography.label,
@@ -180,15 +190,23 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     width: '100%',
   },
-  subtitle: {
+  sectionSubtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
+    textAlign: 'center',
   },
-  title: {
-    ...typography.title,
-    color: colors.primary,
-    marginBottom: spacing.sm,
-    textTransform: 'uppercase',
+  sectionTitle: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+    textAlign: 'center',
+  },
+  shell: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    maxWidth: 720,
+    width: '100%',
   },
 });

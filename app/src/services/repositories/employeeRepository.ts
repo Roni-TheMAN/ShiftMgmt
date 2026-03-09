@@ -3,12 +3,141 @@ import type { EmployeeRecord } from '../../types/database';
 import { getDatabase } from '../db/database';
 import { hashPin, verifyPin } from '../security/pbkdf2';
 
+export type EmployeeProfileInput = {
+  name: string;
+  jobTitle: string;
+  hourlyRate: number;
+  department: string;
+  startDate: string;
+  photoPath?: string | null;
+  address?: string | null;
+  email?: string | null;
+  phoneNumber: string;
+};
+
+type NormalizedEmployeeProfile = {
+  name: string;
+  jobTitle: string;
+  hourlyRate: number;
+  department: string;
+  startDate: string;
+  photoPath: string | null;
+  address: string | null;
+  email: string | null;
+  phoneNumber: string;
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
 
-function normalizeName(name: string) {
-  return name.trim();
+function normalizeRequiredText(value: string) {
+  return value.trim();
+}
+
+function normalizeOptionalText(value?: string | null) {
+  const normalized = value?.trim() ?? '';
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isValidIsoDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [yearPart, monthPart, dayPart] = value.split('-');
+  const year = Number.parseInt(yearPart, 10);
+  const month = Number.parseInt(monthPart, 10);
+  const day = Number.parseInt(dayPart, 10);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return false;
+  }
+
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
+}
+
+function validateEmployeeProfile(profile: NormalizedEmployeeProfile) {
+  if (!profile.name) {
+    throw new Error('Employee name is required.');
+  }
+  if (profile.name.length > 120) {
+    throw new Error('Employee name cannot exceed 120 characters.');
+  }
+
+  if (!profile.jobTitle) {
+    throw new Error('Job title is required.');
+  }
+  if (profile.jobTitle.length > 80) {
+    throw new Error('Job title cannot exceed 80 characters.');
+  }
+
+  if (!Number.isFinite(profile.hourlyRate) || profile.hourlyRate <= 0) {
+    throw new Error('Hourly rate must be greater than 0.');
+  }
+
+  if (!profile.department) {
+    throw new Error('Department is required.');
+  }
+  if (profile.department.length > 80) {
+    throw new Error('Department cannot exceed 80 characters.');
+  }
+
+  if (!profile.startDate) {
+    throw new Error('Start date is required.');
+  }
+  if (!isValidIsoDate(profile.startDate)) {
+    throw new Error('Start date must be in YYYY-MM-DD format.');
+  }
+
+  if (!profile.phoneNumber) {
+    throw new Error('Phone number is required.');
+  }
+  if (profile.phoneNumber.length > 30) {
+    throw new Error('Phone number cannot exceed 30 characters.');
+  }
+  const phoneDigits = profile.phoneNumber.replace(/\D/g, '');
+  if (phoneDigits.length < 7) {
+    throw new Error('Phone number must include at least 7 digits.');
+  }
+
+  if (profile.photoPath && profile.photoPath.length > 500) {
+    throw new Error('Picture path cannot exceed 500 characters.');
+  }
+
+  if (profile.address && profile.address.length > 240) {
+    throw new Error('Address cannot exceed 240 characters.');
+  }
+
+  if (profile.email) {
+    if (profile.email.length > 254) {
+      throw new Error('Email cannot exceed 254 characters.');
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) {
+      throw new Error('Email must be a valid email address.');
+    }
+  }
+}
+
+function normalizeEmployeeProfile(profile: EmployeeProfileInput): NormalizedEmployeeProfile {
+  const normalized: NormalizedEmployeeProfile = {
+    address: normalizeOptionalText(profile.address),
+    department: normalizeRequiredText(profile.department),
+    email: normalizeOptionalText(profile.email)?.toLowerCase() ?? null,
+    hourlyRate: profile.hourlyRate,
+    jobTitle: normalizeRequiredText(profile.jobTitle),
+    name: normalizeRequiredText(profile.name),
+    phoneNumber: normalizeRequiredText(profile.phoneNumber),
+    photoPath: normalizeOptionalText(profile.photoPath),
+    startDate: normalizeRequiredText(profile.startDate),
+  };
+
+  validateEmployeeProfile(normalized);
+  return normalized;
 }
 
 function validateEmployeePin(pin: string) {
@@ -90,11 +219,8 @@ export async function getEmployeeById(employeeId: number) {
   );
 }
 
-export async function createEmployee(name: string) {
-  const normalizedName = normalizeName(name);
-  if (!normalizedName) {
-    throw new Error('Employee name is required.');
-  }
+export async function createEmployee(profile: EmployeeProfileInput) {
+  const normalized = normalizeEmployeeProfile(profile);
 
   const generatedPin = await generateUniqueEmployeePin();
   validateEmployeePin(generatedPin);
@@ -103,9 +229,32 @@ export async function createEmployee(name: string) {
   const timestamp = nowIso();
   const pinHash = await hashPin(generatedPin);
   const result = await db.runAsync(
-    `INSERT INTO employees (name, pin_hash, pin_code, active, created_at, updated_at)
-     VALUES (?, ?, ?, 1, ?, ?)`,
-    normalizedName,
+    `INSERT INTO employees (
+       name,
+       job_title,
+       hourly_rate,
+       department,
+       start_date,
+       photo_path,
+       address,
+       email,
+       phone_number,
+       pin_hash,
+       pin_code,
+       active,
+       created_at,
+       updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    normalized.name,
+    normalized.jobTitle,
+    normalized.hourlyRate,
+    normalized.department,
+    normalized.startDate,
+    normalized.photoPath,
+    normalized.address,
+    normalized.email,
+    normalized.phoneNumber,
     pinHash,
     generatedPin,
     timestamp,
@@ -120,13 +269,10 @@ export async function createEmployee(name: string) {
 
 export async function updateEmployee(
   employeeId: number,
-  name: string,
+  profile: EmployeeProfileInput,
   nextPin?: string,
 ) {
-  const normalizedName = normalizeName(name);
-  if (!normalizedName) {
-    throw new Error('Employee name is required.');
-  }
+  const normalized = normalizeEmployeeProfile(profile);
 
   const db = await getDatabase();
   const timestamp = nowIso();
@@ -138,9 +284,28 @@ export async function updateEmployee(
     const pinHash = await hashPin(normalizedPin);
     await db.runAsync(
       `UPDATE employees
-       SET name = ?, pin_hash = ?, pin_code = ?, updated_at = ?
+       SET name = ?,
+           job_title = ?,
+           hourly_rate = ?,
+           department = ?,
+           start_date = ?,
+           photo_path = ?,
+           address = ?,
+           email = ?,
+           phone_number = ?,
+           pin_hash = ?,
+           pin_code = ?,
+           updated_at = ?
        WHERE id = ?`,
-      normalizedName,
+      normalized.name,
+      normalized.jobTitle,
+      normalized.hourlyRate,
+      normalized.department,
+      normalized.startDate,
+      normalized.photoPath,
+      normalized.address,
+      normalized.email,
+      normalized.phoneNumber,
       pinHash,
       normalizedPin,
       timestamp,
@@ -149,9 +314,26 @@ export async function updateEmployee(
   } else {
     await db.runAsync(
       `UPDATE employees
-       SET name = ?, updated_at = ?
+       SET name = ?,
+           job_title = ?,
+           hourly_rate = ?,
+           department = ?,
+           start_date = ?,
+           photo_path = ?,
+           address = ?,
+           email = ?,
+           phone_number = ?,
+           updated_at = ?
        WHERE id = ?`,
-      normalizedName,
+      normalized.name,
+      normalized.jobTitle,
+      normalized.hourlyRate,
+      normalized.department,
+      normalized.startDate,
+      normalized.photoPath,
+      normalized.address,
+      normalized.email,
+      normalized.phoneNumber,
       timestamp,
       employeeId,
     );

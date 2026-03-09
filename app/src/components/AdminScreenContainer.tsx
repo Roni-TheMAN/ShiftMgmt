@@ -31,7 +31,7 @@ export default function AdminScreenContainer({
 const styles = StyleSheet.create({
   inner: {
     flex: 1,
-    maxWidth: 1200,
+    maxWidth: 1360,
     paddingVertical: spacing.lg,
     width: '100%',
     alignSelf: 'center',

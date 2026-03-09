@@ -4,6 +4,9 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AdminScreenContainer from '../../components/AdminScreenContainer';
 import PrimaryButton from '../../components/PrimaryButton';
+import PageHeader from '../../components/ui/PageHeader';
+import StatusChip from '../../components/ui/StatusChip';
+import SurfaceCard from '../../components/ui/SurfaceCard';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
 import {
@@ -18,6 +21,16 @@ type EmployeeListScreenProps = NativeStackScreenProps<
   RootStackParamList,
   'AdminEmployees'
 >;
+
+function getEmployeeMonogram(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.slice(0, 1).toUpperCase())
+    .join('')
+    .slice(0, 2);
+}
 
 export default function EmployeeListScreen({ navigation }: EmployeeListScreenProps) {
   const { isCompactWidth, isVeryCompactWidth } = useResponsiveLayout();
@@ -64,119 +77,120 @@ export default function EmployeeListScreen({ navigation }: EmployeeListScreenPro
 
   return (
     <AdminScreenContainer>
-      <View style={[styles.headerRow, isCompactWidth ? styles.headerRowCompact : null]}>
-        <View>
-          <Text style={styles.title}>Employees</Text>
-          <Text style={styles.subtitle}>Add, edit, activate, or reset employee PINs.</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <PrimaryButton
-            onPress={() => {
-              markActivity();
-              setShowPins((current) => !current);
-            }}
-            title={showPins ? 'Hide PINs' : 'Show PINs'}
-            variant="neutral"
-          />
-          <PrimaryButton
-            onPress={() => {
-              markActivity();
-              navigation.navigate('AdminEmployeeForm', { mode: 'create' });
-            }}
-            title="Add Employee"
-            variant="success"
-          />
-          <PrimaryButton
-            onPress={() => {
-              navigation.goBack();
-            }}
-            title="Back"
-            variant="neutral"
-          />
-        </View>
-      </View>
+      <PageHeader
+        actions={
+          <>
+            <PrimaryButton
+              onPress={() => {
+                markActivity();
+                setShowPins((current) => !current);
+              }}
+              title={showPins ? 'Hide PINs' : 'Show PINs'}
+              variant="neutral"
+            />
+            <PrimaryButton
+              onPress={() => {
+                markActivity();
+                navigation.navigate('AdminEmployeeForm', { mode: 'create' });
+              }}
+              title="Add Employee"
+              variant="success"
+            />
+          </>
+        }
+        onBack={() => {
+          navigation.goBack();
+        }}
+        subtitle="Add, edit, activate, or reset employee PINs."
+        title="Employees"
+      />
 
       {isLoading ? (
         <View style={styles.centered}>
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.listContent}>
+        <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
           {employees.length === 0 ? (
-            <View style={styles.emptyCard}>
+            <SurfaceCard padding="lg" style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No employees yet.</Text>
               <Text style={styles.emptySubtitle}>Add an employee to start clocking events.</Text>
-            </View>
+            </SurfaceCard>
           ) : (
             employees.map((employee) => (
-              <View
+              <SurfaceCard
                 key={employee.id}
+                padding="lg"
                 style={[
                   styles.employeeCard,
                   isCompactWidth ? styles.employeeCardCompact : null,
                 ]}
+                tone={employee.active ? 'default' : 'danger'}
               >
-                  <View style={[styles.employeeMeta, isCompactWidth ? styles.employeeMetaCompact : null]}>
-                  <Text style={styles.employeeName}>{employee.name}</Text>
-                  <Text
-                    style={[
-                      styles.employeeStatus,
-                      { color: employee.active ? colors.success : colors.danger },
-                    ]}
-                  >
-                    {employee.active ? 'Active' : 'Inactive'}
-                  </Text>
-                  <Text style={styles.employeePin}>
-                    PIN:{' '}
-                    {showPins
-                      ? employee.pin_code ?? 'Unknown (reset PIN to reveal)'
-                      : '••••'}
-                  </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.employeeActions,
-                      isCompactWidth ? styles.employeeActionsCompact : null,
-                    ]}
-                  >
-                    <PrimaryButton
-                      fullWidth={isVeryCompactWidth}
-                      onPress={() => {
-                        markActivity();
-                        navigation.navigate('AdminEmployeeForm', {
-                          mode: 'edit',
-                          employeeId: employee.id,
-                        });
-                      }}
-                      style={isCompactWidth ? styles.employeeActionButton : undefined}
-                      title="Edit"
-                      variant="primary"
-                    />
-                    <PrimaryButton
-                      disabled={activeToggleId === employee.id}
-                      fullWidth={isVeryCompactWidth}
-                      onPress={() => {
-                        void toggleActive(employee);
-                      }}
-                      style={isCompactWidth ? styles.employeeActionButton : undefined}
-                      title={employee.active ? 'Deactivate' : 'Activate'}
-                      variant={employee.active ? 'danger' : 'success'}
-                    />
-                    <PrimaryButton
-                      fullWidth={isVeryCompactWidth}
-                      onPress={() => {
-                        markActivity();
-                        navigation.navigate('AdminResetEmployeePin', {
-                          employeeId: employee.id,
-                          employeeName: employee.name,
-                        });
-                      }}
-                      style={isCompactWidth ? styles.employeeActionButton : undefined}
-                      title="Reset PIN"
-                      variant="neutral"
-                    />
+                <View style={[styles.employeeMeta, isCompactWidth ? styles.employeeMetaCompact : null]}>
+                  <View style={styles.identityRow}>
+                    <View style={styles.monogramBubble}>
+                      <Text style={styles.monogramText}>{getEmployeeMonogram(employee.name)}</Text>
+                    </View>
+                    <View style={styles.identityTextWrap}>
+                      <Text style={styles.employeeName}>{employee.name}</Text>
+                      <View style={styles.identityMetaRow}>
+                        <StatusChip
+                          label={employee.active ? 'Active' : 'Inactive'}
+                          tone={employee.active ? 'success' : 'danger'}
+                        />
+                        <Text style={styles.employeePin}>
+                          PIN: {showPins ? employee.pin_code ?? 'Unknown' : '••••'}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
                 </View>
+
+                <View
+                  style={[
+                    styles.employeeActions,
+                    isCompactWidth ? styles.employeeActionsCompact : null,
+                  ]}
+                >
+                  <PrimaryButton
+                    fullWidth={isVeryCompactWidth}
+                    onPress={() => {
+                      markActivity();
+                      navigation.navigate('AdminEmployeeForm', {
+                        mode: 'edit',
+                        employeeId: employee.id,
+                      });
+                    }}
+                    style={isCompactWidth ? styles.employeeActionButton : undefined}
+                    title="Edit"
+                    variant="primary"
+                  />
+                  <PrimaryButton
+                    disabled={activeToggleId === employee.id}
+                    fullWidth={isVeryCompactWidth}
+                    onPress={() => {
+                      void toggleActive(employee);
+                    }}
+                    style={isCompactWidth ? styles.employeeActionButton : undefined}
+                    title={employee.active ? 'Deactivate' : 'Activate'}
+                    variant={employee.active ? 'danger' : 'success'}
+                  />
+                  <PrimaryButton
+                    fullWidth={isVeryCompactWidth}
+                    onPress={() => {
+                      markActivity();
+                      navigation.navigate('AdminResetEmployeePin', {
+                        employeeId: employee.id,
+                        employeeName: employee.name,
+                      });
+                    }}
+                    style={isCompactWidth ? styles.employeeActionButton : undefined}
+                    title="Reset PIN"
+                    variant="neutral"
+                  />
+                </View>
+              </SurfaceCard>
             ))
           )}
         </ScrollView>
@@ -193,12 +207,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
+  employeeActionButton: {
+    flex: 1,
+  },
   employeeActions: {
     flexDirection: 'row',
     gap: spacing.sm,
-  },
-  employeeActionButton: {
-    flex: 1,
   },
   employeeActionsCompact: {
     flexWrap: 'wrap',
@@ -206,49 +220,40 @@ const styles = StyleSheet.create({
   },
   employeeCard: {
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: spacing.md,
   },
   employeeCardCompact: {
     alignItems: 'stretch',
     flexDirection: 'column',
-    gap: spacing.sm,
+    gap: spacing.md,
   },
   employeeMeta: {
-    gap: spacing.xs,
+    flex: 1,
+    marginRight: spacing.md,
   },
   employeeMetaCompact: {
+    marginRight: 0,
     width: '100%',
   },
   employeeName: {
-    ...typography.h2,
+    ...typography.h1,
     color: colors.textPrimary,
-  },
-  employeeStatus: {
-    ...typography.label,
   },
   employeePin: {
     ...typography.label,
-    color: colors.textPrimary,
-    marginTop: spacing.xs,
+    color: colors.textSecondary,
   },
   emptyCard: {
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: spacing.xl,
+    minHeight: 220,
+    justifyContent: 'center',
   },
   emptySubtitle: {
     ...typography.body,
     color: colors.textSecondary,
     marginTop: spacing.xs,
+    textAlign: 'center',
   },
   emptyTitle: {
     ...typography.h2,
@@ -259,35 +264,35 @@ const styles = StyleSheet.create({
     color: colors.danger,
     marginTop: spacing.sm,
   },
-  headerActions: {
+  identityMetaRow: {
+    alignItems: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
-    justifyContent: 'flex-end',
+    marginTop: spacing.sm,
   },
-  headerRow: {
+  identityRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
+    gap: spacing.md,
   },
-  headerRowCompact: {
-    alignItems: 'stretch',
-    flexDirection: 'column',
-    gap: spacing.sm,
+  identityTextWrap: {
+    flex: 1,
   },
   listContent: {
     gap: spacing.md,
-    paddingBottom: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  subtitle: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
+  monogramBubble: {
+    alignItems: 'center',
+    backgroundColor: colors.successMuted,
+    borderRadius: 22,
+    height: 74,
+    justifyContent: 'center',
+    width: 74,
   },
-  title: {
-    ...typography.title,
+  monogramText: {
+    ...typography.h2,
     color: colors.primary,
-    textTransform: 'uppercase',
   },
 });

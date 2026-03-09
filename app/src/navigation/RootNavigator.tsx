@@ -1,6 +1,6 @@
 import {
   NavigationContainer,
-  DefaultTheme,
+  DarkTheme,
   createNavigationContainerRef,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -93,14 +93,15 @@ export default function RootNavigator() {
       <NavigationContainer
         ref={navigationRef}
         theme={{
-          ...DefaultTheme,
+          ...DarkTheme,
           colors: {
-            ...DefaultTheme.colors,
+            ...DarkTheme.colors,
             background: colors.background,
+            border: colors.borderStrong,
             card: colors.background,
+            notification: colors.primary,
             primary: colors.primary,
             text: colors.textPrimary,
-            border: colors.border,
           },
         }}
       >

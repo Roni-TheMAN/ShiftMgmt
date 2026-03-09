@@ -57,6 +57,19 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE clock_events ADD COLUMN last_edited_at TEXT`,
     ],
   },
+  {
+    version: 5,
+    statements: [
+      `ALTER TABLE employees ADD COLUMN job_title TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE employees ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0`,
+      `ALTER TABLE employees ADD COLUMN department TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE employees ADD COLUMN start_date TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE employees ADD COLUMN photo_path TEXT`,
+      `ALTER TABLE employees ADD COLUMN address TEXT`,
+      `ALTER TABLE employees ADD COLUMN email TEXT`,
+      `ALTER TABLE employees ADD COLUMN phone_number TEXT NOT NULL DEFAULT ''`,
+    ],
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase) {

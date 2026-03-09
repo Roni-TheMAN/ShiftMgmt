@@ -3,10 +3,11 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './src/navigation/RootNavigator';
+import SurfaceCard from './src/components/ui/SurfaceCard';
 import { ensurePhotoDirectory } from './src/services/camera/photoStorage';
 import { getDatabase } from './src/services/db/database';
 import { ensureDefaultAdminPin } from './src/services/repositories/settingsRepository';
-import { colors } from './src/theme';
+import { colors, spacing, typography } from './src/theme';
 
 export default function App() {
   const [isReady, setIsReady] = useState(false);
@@ -44,9 +45,11 @@ export default function App() {
   if (startupError) {
     return (
       <View style={styles.centered}>
-        <StatusBar style="dark" />
-        <Text style={styles.errorTitle}>Initialization Failed</Text>
-        <Text style={styles.errorText}>{startupError}</Text>
+        <StatusBar style="light" />
+        <SurfaceCard padding="lg" style={styles.startupCard} tone="danger">
+          <Text style={styles.errorTitle}>Initialization Failed</Text>
+          <Text style={styles.errorText}>{startupError}</Text>
+        </SurfaceCard>
       </View>
     );
   }
@@ -54,16 +57,18 @@ export default function App() {
   if (!isReady) {
     return (
       <View style={styles.centered}>
-        <StatusBar style="dark" />
-        <ActivityIndicator color={colors.primary} size="large" />
-        <Text style={styles.loadingText}>Preparing kiosk...</Text>
+        <StatusBar style="light" />
+        <SurfaceCard padding="lg" style={styles.startupCard} tone="accent">
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.loadingText}>Preparing kiosk...</Text>
+        </SurfaceCard>
       </View>
     );
   }
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <RootNavigator />
     </SafeAreaProvider>
   );
@@ -75,24 +80,27 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.lg,
   },
   errorText: {
+    ...typography.body,
     color: colors.textSecondary,
-    fontFamily: 'AvenirNext-Regular',
-    fontSize: 16,
+    marginTop: spacing.sm,
     textAlign: 'center',
   },
   errorTitle: {
+    ...typography.h1,
     color: colors.danger,
-    fontFamily: 'AvenirNext-DemiBold',
-    fontSize: 28,
-    marginBottom: 12,
+    textAlign: 'center',
   },
   loadingText: {
+    ...typography.label,
     color: colors.textSecondary,
-    fontFamily: 'AvenirNext-Medium',
-    fontSize: 18,
-    marginTop: 14,
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  startupCard: {
+    maxWidth: 420,
+    width: '100%',
   },
 });
