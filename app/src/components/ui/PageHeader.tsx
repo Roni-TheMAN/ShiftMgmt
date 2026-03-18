@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
-import { colors, spacing, typography } from '../../theme';
+import { colors, layout, radius, spacing, typography } from '../../theme';
 import StatusChip from './StatusChip';
 
 type PageHeaderProps = {
@@ -29,19 +29,23 @@ export default function PageHeader({
     <View style={[styles.wrapper, isCompactWidth ? styles.wrapperCompact : null]}>
       <View style={styles.headingRow}>
         {onBack ? (
-          <Pressable onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>{'<'}</Text>
+          <Pressable accessibilityRole="button" onPress={onBack} style={styles.backButton}>
+            <Text style={styles.backButtonText}>{'\u2039'}</Text>
           </Pressable>
         ) : null}
+
         <View style={styles.textWrap}>
           {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
+
           <View style={[styles.titleRow, isVeryCompactWidth ? styles.titleRowCompact : null]}>
             <Text style={styles.title}>{title}</Text>
-            {badgeLabel ? <StatusChip label={badgeLabel} tone={badgeTone} size="sm" /> : null}
+            {badgeLabel ? <StatusChip label={badgeLabel} size="sm" tone={badgeTone} /> : null}
           </View>
+
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
         </View>
       </View>
+
       {actions ? (
         <View style={[styles.actions, isCompactWidth ? styles.actionsCompact : null]}>
           {actions}
@@ -54,11 +58,12 @@ export default function PageHeader({
 const styles = StyleSheet.create({
   actions: {
     alignItems: 'center',
+    columnGap: spacing.sm,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.sm,
     justifyContent: 'flex-end',
     marginLeft: spacing.lg,
+    rowGap: spacing.sm,
   },
   actionsCompact: {
     marginLeft: 0,
@@ -66,23 +71,24 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignItems: 'center',
-    backgroundColor: colors.surfaceMuted,
-    borderColor: colors.border,
-    borderRadius: 16,
+    backgroundColor: colors.backgrounds.card,
+    borderColor: colors.borders.default,
+    borderRadius: radius.button,
     borderWidth: 1,
-    height: 46,
+    height: layout.touchTarget.minimum,
     justifyContent: 'center',
     marginRight: spacing.md,
-    width: 46,
+    width: layout.touchTarget.minimum,
   },
   backButtonText: {
-    ...typography.h2,
-    color: colors.textPrimary,
+    ...typography.sectionTitle,
+    color: colors.text.primary,
+    lineHeight: 26,
     marginTop: -2,
   },
   eyebrow: {
-    ...typography.eyebrow,
-    color: colors.textMuted,
+    ...typography.micro,
+    color: colors.text.muted,
     marginBottom: spacing.xs,
     textTransform: 'uppercase',
   },
@@ -93,16 +99,17 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     ...typography.body,
-    color: colors.textSecondary,
+    color: colors.text.secondary,
     marginTop: spacing.xs,
-    maxWidth: 720,
+    maxWidth: 760,
   },
   textWrap: {
     flex: 1,
   },
   title: {
-    ...typography.title,
-    color: colors.textPrimary,
+    ...typography.screenTitle,
+    color: colors.text.primary,
+    flexShrink: 1,
   },
   titleRow: {
     alignItems: 'center',
@@ -116,9 +123,12 @@ const styles = StyleSheet.create({
   },
   wrapper: {
     alignItems: 'flex-start',
+    borderBottomColor: colors.borders.subtle,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: spacing.lg,
+    marginBottom: spacing.section,
+    paddingBottom: spacing.md,
     width: '100%',
   },
   wrapperCompact: {

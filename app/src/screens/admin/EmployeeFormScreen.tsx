@@ -4,11 +4,13 @@ import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import AdminScreenContainer from '../../components/AdminScreenContainer';
 import AdminScrollContainer from '../../components/AdminScrollContainer';
 import PrimaryButton from '../../components/PrimaryButton';
+import FormSectionCard from '../../components/ui/FormSectionCard';
 import PageHeader from '../../components/ui/PageHeader';
+import StatusChip from '../../components/ui/StatusChip';
 import SurfaceCard from '../../components/ui/SurfaceCard';
 import TextField from '../../components/ui/TextField';
-import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { EMPLOYEE_PIN_LENGTH } from '../../constants/app';
 import {
   createEmployee,
@@ -16,7 +18,9 @@ import {
   updateEmployee,
   type EmployeeProfileInput,
 } from '../../services/repositories/employeeRepository';
-import { colors, spacing, typography } from '../../theme';
+import { listEmployeePayRates } from '../../services/repositories/employeePayRateRepository';
+import { colors, radius, spacing, typography, withAlpha } from '../../theme';
+import type { EmployeePayRateRecord } from '../../types/database';
 import type { RootStackParamList } from '../../types/navigation';
 
 type EmployeeFormScreenProps = NativeStackScreenProps<
@@ -28,6 +32,7 @@ type EmployeeFormDraft = {
   name: string;
   jobTitle: string;
   hourlyRateInput: string;
+  rateEffectiveDate: string;
   department: string;
   startDate: string;
   photoPath: string;
@@ -53,6 +58,7 @@ function createDefaultDraft(): EmployeeFormDraft {
     name: '',
     phoneNumber: '',
     photoPath: '',
+    rateEffectiveDate: toIsoDateLocal(new Date()),
     startDate: toIsoDateLocal(new Date()),
   };
 }
@@ -106,6 +112,7 @@ export default function EmployeeFormScreen({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingEmployee, setIsLoadingEmployee] = useState(!isCreateMode);
+  const [payRateHistory, setPayRateHistory] = useState<EmployeePayRateRecord[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -115,7 +122,10 @@ export default function EmployeeFormScreen({
       }
       setIsLoadingEmployee(true);
       try {
-        const employee = await getEmployeeById(employeeId);
+        const [employee, rateHistory] = await Promise.all([
+          getEmployeeById(employeeId),
+          listEmployeePayRates(employeeId),
+        ]);
         if (!employee) {
           throw new Error('Employee not found.');
         }
@@ -129,8 +139,10 @@ export default function EmployeeFormScreen({
             name: employee.name,
             phoneNumber: employee.phone_number,
             photoPath: employee.photo_path ?? '',
+            rateEffectiveDate: toIsoDateLocal(new Date()),
             startDate: employee.start_date || toIsoDateLocal(new Date()),
           });
+          setPayRateHistory(rateHistory);
         }
       } catch (loadError) {
         if (mounted) {
@@ -155,6 +167,9 @@ export default function EmployeeFormScreen({
     setError(null);
     setDraft((current) => ({
       ...current,
+      ...(field === 'startDate' && isCreateMode
+        ? { rateEffectiveDate: value }
+        : {}),
       [field]: value,
     }));
   };
@@ -189,6 +204,12 @@ export default function EmployeeFormScreen({
       return null;
     }
 
+    const normalizedRateEffectiveDate = draft.rateEffectiveDate.trim();
+    if (!isValidIsoDate(normalizedRateEffectiveDate)) {
+      setError('Rate effective date must be in YYYY-MM-DD format.');
+      return null;
+    }
+
     return {
       address: draft.address,
       department: draft.department,
@@ -198,6 +219,7 @@ export default function EmployeeFormScreen({
       name: draft.name,
       phoneNumber: draft.phoneNumber,
       photoPath: draft.photoPath,
+      rateEffectiveDate: normalizedRateEffectiveDate,
       startDate: normalizedStartDate,
     };
   };
@@ -240,7 +262,7 @@ export default function EmployeeFormScreen({
   if (isLoadingEmployee) {
     return (
       <AdminScreenContainer style={styles.centered}>
-        <ActivityIndicator color={colors.primary} />
+        <ActivityIndicator color={colors.accents.bronze} />
       </AdminScreenContainer>
     );
   }
@@ -248,26 +270,50 @@ export default function EmployeeFormScreen({
   return (
     <AdminScrollContainer>
       <PageHeader
+        badgeLabel={isCreateMode ? 'New Profile' : 'Editing'}
+        badgeTone="info"
         onBack={() => navigation.goBack()}
         subtitle={
           isCreateMode
             ? 'Create an employee profile with payroll and contact details.'
-            : 'Update employee profile details.'
+            : 'Update employee profile details and payroll information.'
         }
         title={isCreateMode ? 'Add Employee' : 'Edit Employee'}
       />
 
       <View style={styles.formStack}>
-        <SurfaceCard padding="lg" style={styles.formCard}>
-          <Text style={styles.sectionTitle}>Employment Details</Text>
-          <Text style={styles.sectionCaption}>
-            Required fields used for payroll and shift records.
-          </Text>
+        <SurfaceCard padding="lg" style={styles.summaryCard} tone="info">
+          <View style={[styles.summaryRow, isCompactWidth ? styles.summaryRowCompact : null]}>
+            <View style={styles.summaryIntro}>
+              <Text style={styles.summaryEyebrow}>Profile setup</Text>
+              <Text style={styles.summaryTitle}>
+                {isCreateMode ? 'Create a new employee record' : 'Review and update this employee'}
+              </Text>
+              <Text style={styles.summarySupport}>
+                Keep required payroll details at the top, and use the optional section for supporting admin records.
+              </Text>
+            </View>
 
+            <View style={styles.summaryStatus}>
+              {isCreateMode ? (
+                <StatusChip label={`Auto PIN on Save`} tone="info" />
+              ) : (
+                <StatusChip label="Changes update immediately after save" tone="success" />
+              )}
+            </View>
+          </View>
+        </SurfaceCard>
+
+        <FormSectionCard
+          style={styles.formCard}
+          subtitle="Required identity and role details used across shift records and payroll."
+          title="Identity & Role"
+        >
           <View style={[styles.fieldRow, isCompactWidth ? styles.fieldRowStacked : null]}>
             <TextField
               autoCapitalize="words"
               containerStyle={styles.fieldColumn}
+              description="Shown on clock events and payroll reports."
               label="Name"
               onChangeText={(value) => {
                 setDraftField('name', value);
@@ -279,6 +325,7 @@ export default function EmployeeFormScreen({
             <TextField
               autoCapitalize="words"
               containerStyle={styles.fieldColumn}
+              description="Current role or position title."
               label="Job Title"
               onChangeText={(value) => {
                 setDraftField('jobTitle', value);
@@ -313,10 +360,17 @@ export default function EmployeeFormScreen({
               value={draft.phoneNumber}
             />
           </View>
+        </FormSectionCard>
 
+        <FormSectionCard
+          style={styles.formCard}
+          subtitle="These values affect hours calculations and payroll summaries."
+          title="Payroll Setup"
+        >
           <View style={[styles.fieldRow, isCompactWidth ? styles.fieldRowStacked : null]}>
             <TextField
               containerStyle={styles.fieldColumn}
+              description="Base hourly pay rate."
               keyboardType="decimal-pad"
               label="Hourly Rate"
               onChangeText={(value) => {
@@ -328,7 +382,8 @@ export default function EmployeeFormScreen({
             />
             <TextField
               containerStyle={styles.fieldColumn}
-              label="Start Date (YYYY-MM-DD)"
+              description="Use YYYY-MM-DD format."
+              label="Start Date"
               onChangeText={(value) => {
                 setDraftField('startDate', value);
               }}
@@ -337,16 +392,45 @@ export default function EmployeeFormScreen({
               value={draft.startDate}
             />
           </View>
-        </SurfaceCard>
+          <View style={[styles.fieldRow, isCompactWidth ? styles.fieldRowStacked : null]}>
+            <TextField
+              containerStyle={styles.fieldColumn}
+              description="Used when the hourly rate changes. Must be on or after the latest saved rate date."
+              label="Rate Effective Date"
+              onChangeText={(value) => {
+                setDraftField('rateEffectiveDate', value);
+              }}
+              placeholder="2026-03-08"
+              returnKeyType="done"
+              value={draft.rateEffectiveDate}
+            />
+          </View>
+          {!isCreateMode && payRateHistory.length > 0 ? (
+            <View style={styles.payHistoryBox}>
+              <Text style={styles.payHistoryTitle}>Pay Rate History</Text>
+              <Text style={styles.payHistorySupport}>
+                The current hourly rate is applied from the effective date you save here.
+              </Text>
+              {payRateHistory.map((entry) => (
+                <View key={entry.id} style={styles.payHistoryRow}>
+                  <Text style={styles.payHistoryDate}>{entry.effective_start_date}</Text>
+                  <Text style={styles.payHistoryRate}>${formatHourlyRate(entry.hourly_rate)}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </FormSectionCard>
 
-        <SurfaceCard padding="lg" style={styles.formCard}>
-          <Text style={styles.sectionTitle}>Contact and Optional Details</Text>
-
+        <FormSectionCard
+          style={styles.formCard}
+          subtitle="Optional details help with internal records and contact follow-up."
+          title="Contact & Optional Details"
+        >
           <TextField
             autoCapitalize="none"
             containerStyle={styles.singleField}
             keyboardType="email-address"
-            label="Email (Optional)"
+            label="Email"
             onChangeText={(value) => {
               setDraftField('email', value);
             }}
@@ -357,7 +441,7 @@ export default function EmployeeFormScreen({
           <TextField
             autoCapitalize="sentences"
             containerStyle={styles.singleField}
-            label="Address (Optional)"
+            label="Address"
             multiline
             onChangeText={(value) => {
               setDraftField('address', value);
@@ -371,55 +455,74 @@ export default function EmployeeFormScreen({
           <TextField
             autoCapitalize="none"
             containerStyle={styles.singleField}
-            label="Picture URL/Path (Optional)"
+            description="Optional image URL or local file path for admin reference."
+            label="Picture URL/Path"
             onChangeText={(value) => {
               setDraftField('photoPath', value);
             }}
             placeholder="https://... or local file path"
             value={draft.photoPath}
           />
-        </SurfaceCard>
+        </FormSectionCard>
 
-        <SurfaceCard padding="lg" style={styles.formCard}>
-          <Text style={styles.sectionTitle}>{isCreateMode ? 'PIN Setup' : 'Save Changes'}</Text>
-          {isCreateMode ? (
-            <Text style={styles.helperText}>
-              A random unique {EMPLOYEE_PIN_LENGTH}-digit PIN will be generated on save.
-              {'\n'}
-              Use the employee list Reset PIN action later if needed.
-            </Text>
-          ) : null}
-
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          <View
-            style={[
-              styles.actions,
-              isCompactWidth ? styles.actionsCompact : null,
-              isVeryCompactWidth ? styles.actionsStacked : null,
-            ]}
-          >
-            <PrimaryButton
-              disabled={isSaving}
-              fullWidth={isVeryCompactWidth}
-              onPress={() => {
-                void saveEmployee();
-              }}
-              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-              title={isSaving ? 'Saving...' : 'Save Employee'}
-              variant="success"
-            />
-            <PrimaryButton
-              fullWidth={isVeryCompactWidth}
-              onPress={() => {
-                navigation.goBack();
-              }}
-              style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-              title="Cancel"
-              variant="neutral"
-            />
+        <FormSectionCard
+          footer={
+            <View
+              style={[
+                styles.actions,
+                isCompactWidth ? styles.actionsCompact : null,
+                isVeryCompactWidth ? styles.actionsStacked : null,
+              ]}
+            >
+              <PrimaryButton
+                disabled={isSaving}
+                fullWidth={isVeryCompactWidth}
+                onPress={() => {
+                  void saveEmployee();
+                }}
+                style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+                title={isSaving ? 'Saving...' : isCreateMode ? 'Save Employee' : 'Save Changes'}
+                variant="primary"
+              />
+              <PrimaryButton
+                fullWidth={isVeryCompactWidth}
+                onPress={() => {
+                  navigation.goBack();
+                }}
+                style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
+                title="Cancel"
+                variant="secondary"
+              />
+            </View>
+          }
+          style={styles.formCard}
+          title={isCreateMode ? 'Save New Employee' : 'Save Changes'}
+        >
+          <View style={styles.saveIntroRow}>
+            <View style={styles.saveIntroText}>
+              <Text style={styles.saveIntroTitle}>
+                {isCreateMode ? 'PIN assignment' : 'Review before saving'}
+              </Text>
+              <Text style={styles.saveIntroSupport}>
+                {isCreateMode
+                  ? `A random unique ${EMPLOYEE_PIN_LENGTH}-digit PIN will be generated on save. You can reset it later from the employee directory.`
+                  : 'Saving updates this employee profile, keeps the existing access PIN, and records any hourly-rate change using the rate effective date above.'}
+              </Text>
+            </View>
+            <StatusChip label={isCreateMode ? 'Auto PIN' : 'Update'} tone="info" />
           </View>
-        </SurfaceCard>
+
+          <View style={styles.noteBox}>
+            <Text style={styles.noteLabel}>Required for save</Text>
+            <Text style={styles.noteText}>
+              Name, job title, department, phone number, hourly rate, a valid start date, and a valid rate effective date.
+            </Text>
+          </View>
+
+          <Text style={[styles.errorText, !error ? styles.errorTextHidden : null]}>
+            {error ?? ' '}
+          </Text>
+        </FormSectionCard>
       </View>
     </AdminScrollContainer>
   );
@@ -429,7 +532,6 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     gap: spacing.md,
-    marginTop: spacing.lg,
   },
   actionsCompact: {
     alignSelf: 'stretch',
@@ -446,9 +548,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   errorText: {
-    ...typography.label,
-    color: colors.danger,
+    ...typography.bodySm,
+    color: colors.states.danger,
+    minHeight: 20,
     marginTop: spacing.md,
+  },
+  errorTextHidden: {
+    color: 'transparent',
   },
   fieldColumn: {
     flex: 1,
@@ -460,33 +566,127 @@ const styles = StyleSheet.create({
   },
   fieldRowStacked: {
     flexDirection: 'column',
-    gap: 0,
   },
   formCard: {
-    maxWidth: 920,
+    maxWidth: 980,
     width: '100%',
   },
   formStack: {
-    gap: spacing.md,
-  },
-  helperText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginTop: spacing.md,
+    gap: spacing.section,
   },
   multilineField: {
-    minHeight: 96,
+    minHeight: 120,
   },
-  sectionCaption: {
-    ...typography.body,
-    color: colors.textSecondary,
+  noteBox: {
+    backgroundColor: colors.backgrounds.secondary,
+    borderColor: colors.borders.subtle,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  noteLabel: {
+    ...typography.micro,
+    color: colors.text.muted,
+    textTransform: 'uppercase',
+  },
+  noteText: {
+    ...typography.bodySm,
+    color: colors.text.secondary,
     marginTop: spacing.xs,
   },
-  sectionTitle: {
-    ...typography.h2,
-    color: colors.textPrimary,
+  payHistoryBox: {
+    backgroundColor: colors.backgrounds.secondary,
+    borderColor: colors.borders.subtle,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  payHistoryDate: {
+    ...typography.bodySm,
+    color: colors.text.primary,
+  },
+  payHistoryRate: {
+    ...typography.bodySm,
+    color: colors.text.secondary,
+    fontWeight: '600',
+  },
+  payHistoryRow: {
+    alignItems: 'center',
+    borderTopColor: colors.borders.subtle,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  payHistorySupport: {
+    ...typography.bodySm,
+    color: colors.text.secondary,
+    marginTop: spacing.xs,
+  },
+  payHistoryTitle: {
+    ...typography.cardTitle,
+    color: colors.text.primary,
+  },
+  saveIntroRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  saveIntroSupport: {
+    ...typography.body,
+    color: colors.text.secondary,
+    marginTop: spacing.xs,
+  },
+  saveIntroText: {
+    flex: 1,
+  },
+  saveIntroTitle: {
+    ...typography.cardTitle,
+    color: colors.text.primary,
   },
   singleField: {
     width: '100%',
+  },
+  summaryCard: {
+    maxWidth: 980,
+    width: '100%',
+  },
+  summaryEyebrow: {
+    ...typography.micro,
+    color: colors.text.muted,
+    textTransform: 'uppercase',
+  },
+  summaryIntro: {
+    flex: 1,
+    marginRight: spacing.md,
+  },
+  summaryRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  summaryRowCompact: {
+    alignItems: 'flex-start',
+    flexDirection: 'column',
+    gap: spacing.md,
+  },
+  summaryStatus: {
+    alignItems: 'flex-end',
+  },
+  summarySupport: {
+    ...typography.body,
+    color: colors.text.secondary,
+    marginTop: spacing.sm,
+    maxWidth: 620,
+  },
+  summaryTitle: {
+    ...typography.sectionTitle,
+    color: colors.text.primary,
+    marginTop: spacing.xs,
   },
 });

@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, spacing, typography } from '../../theme';
+import { componentTokens, spacing, typography } from '../../theme';
 
 type ChipTone = 'neutral' | 'success' | 'info' | 'warning' | 'danger';
 type ChipSize = 'sm' | 'md';
@@ -11,31 +11,11 @@ type StatusChipProps = {
 };
 
 const toneStyles = {
-  danger: {
-    backgroundColor: colors.dangerMuted,
-    borderColor: colors.dangerMuted,
-    color: colors.danger,
-  },
-  info: {
-    backgroundColor: colors.infoMuted,
-    borderColor: colors.infoMuted,
-    color: colors.info,
-  },
-  neutral: {
-    backgroundColor: colors.surfaceMuted,
-    borderColor: colors.border,
-    color: colors.textSecondary,
-  },
-  success: {
-    backgroundColor: colors.successMuted,
-    borderColor: colors.successMuted,
-    color: colors.success,
-  },
-  warning: {
-    backgroundColor: colors.warningMuted,
-    borderColor: colors.warningMuted,
-    color: colors.warning,
-  },
+  danger: componentTokens.chip.variants.danger,
+  info: componentTokens.chip.variants.bronze,
+  neutral: componentTokens.chip.variants.neutral,
+  success: componentTokens.chip.variants.olive,
+  warning: componentTokens.chip.variants.terracotta,
 } as const;
 
 export default function StatusChip({
@@ -44,19 +24,29 @@ export default function StatusChip({
   size = 'md',
 }: StatusChipProps) {
   const palette = toneStyles[tone];
+  const isSmall = size === 'sm';
 
   return (
     <View
       style={[
         styles.chip,
-        size === 'sm' ? styles.chipSmall : null,
+        isSmall ? styles.chipSmall : null,
         {
           backgroundColor: palette.backgroundColor,
           borderColor: palette.borderColor,
         },
       ]}
     >
-      <Text style={[styles.text, size === 'sm' ? styles.textSmall : null, { color: palette.color }]}>
+      <Text
+        numberOfLines={1}
+        style={[
+          styles.text,
+          isSmall ? styles.textSmall : null,
+          {
+            color: palette.textColor,
+          },
+        ]}
+      >
         {label}
       </Text>
     </View>
@@ -66,24 +56,23 @@ export default function StatusChip({
 const styles = StyleSheet.create({
   chip: {
     alignItems: 'center',
-    borderRadius: 999,
+    borderRadius: componentTokens.chip.radius,
     borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 32,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
+    minHeight: componentTokens.chip.minHeight.md,
+    paddingHorizontal: componentTokens.chip.paddingX.md,
+    paddingVertical: spacing.xxs + 1,
   },
   chipSmall: {
-    minHeight: 26,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 4,
+    minHeight: componentTokens.chip.minHeight.sm,
+    paddingHorizontal: componentTokens.chip.paddingX.sm,
+    paddingVertical: spacing.xxs,
   },
   text: {
-    ...typography.eyebrow,
-    textTransform: 'uppercase',
+    ...typography.chip,
   },
   textSmall: {
-    fontSize: 10,
-    lineHeight: 14,
+    ...typography.micro,
+    letterSpacing: 0.4,
   },
 });

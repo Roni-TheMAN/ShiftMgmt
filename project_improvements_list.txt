@@ -1,0 +1,60 @@
+ShiftMgmt Project Improvements and Feature Ideas
+
+High-Value Improvements
+1. Remove plaintext employee PIN storage and keep only hashed PINs.
+2. Add automatic backup and restore for SQLite data plus stored punch photos.
+3. Add multi-device sync or a real backend so data is not locked to one kiosk.
+4. Add a full audit trail for every admin change, delete, reset, and payroll edit.
+5. Add automated tests for payroll calculations, pay-period logic, and shift editing.
+6. Add crash/error logging so kiosk failures can be diagnosed quickly.
+7. Improve Danger Zone so it can optionally reset payroll/property settings too.
+8. Use property address/details in the app and in exported reports instead of storing unused settings.
+9. Add a full-screen photo/detail viewer in Logs.
+10. Add stronger validation for overlapping shifts, duplicate punches, extreme durations, and missing photos.
+
+Payroll and Admin Features
+1. Payroll period approval/lock so finalized periods cannot be edited accidentally.
+2. Manager-required reason notes for any manual shift edit or delete.
+3. Exception report for open shifts, auto clock-outs, missed punches, and edited shifts.
+4. Department/job-title filtering in payroll and logs.
+5. Payroll totals by department, job title, and employee group.
+6. Holiday calendar management screen for OT2 dates.
+7. Break and meal tracking with compliance warnings.
+8. Employee pay history so hourly-rate changes are effective-dated.
+9. Signature-ready payroll export for manager approval.
+10. Integration/export formats for payroll systems like QuickBooks, Gusto, ADP, or CSV templates.
+
+Kiosk and Employee Experience
+1. QR code or badge scan as an alternative to PIN entry.
+2. Configurable PIN length and stronger admin authentication.
+3. Multi-language kiosk mode.
+4. Accessibility pass for larger touch targets, clearer errors, and better contrast.
+5. "Who is clocked in now" live admin dashboard.
+6. Better confirmation flow with punch summary and recent shift context.
+7. Late arrival / missed clock-out alerts to managers.
+8. Employee self-service view for recent punches and hours.
+9. Optional geofencing or allowed-device enforcement if you move beyond a fixed kiosk.
+10. Kiosk lockdown/admin recovery tools for real-world deployment.
+
+Reporting Improvements
+1. More report types: daily attendance, weekly summary, employee exception report, edit history report.
+2. Filters by employee, department, status, date range, and event source.
+3. Report branding with logo, property details, and custom footer text.
+4. Trend charts for hours, labor cost, and overtime over time.
+5. Export bundle for a full pay period: PDF report + raw CSV + exception list.
+6. Scheduled report generation and auto-share/email when a period closes.
+
+Scheduling and Workforce Features
+1. Basic shift scheduling/roster planning.
+2. PTO, sick time, and holiday leave tracking.
+3. Availability and preferred-days management.
+4. Attendance scoring: lateness, no-shows, early outs.
+5. Overtime forecasting before employees exceed thresholds.
+
+Technical / Product Maturity
+1. Import/export employees from CSV.
+2. Migration/versioning tools for safer upgrades.
+3. Seed/demo mode for onboarding and testing.
+4. Feature flags for kiosk-only vs manager-enabled deployments.
+5. Offline health checks and storage-space monitoring for photo capture.
+6. Admin session hardening and configurable timeout rules.

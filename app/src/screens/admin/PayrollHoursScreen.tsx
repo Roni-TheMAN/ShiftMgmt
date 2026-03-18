@@ -21,7 +21,13 @@ import PageHeader from '../../components/ui/PageHeader';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
 import { buildPayrollHoursSummary } from '../../services/payroll/hoursAggregation';
+import { buildPayrollExceptionReport } from '../../services/payroll/exceptionReport';
 import { getPayPeriodPreviewByHistoryOffset } from '../../services/payroll/payPeriod';
+import {
+  exportPayrollExceptionsCsv,
+  exportPayrollTemplateCsv,
+  type PayrollCsvTemplate,
+} from '../../services/export/payrollCsvExport';
 import { exportPayrollPeriodReportPdf } from '../../services/export/payrollReportExport';
 import {
   deleteAdminShift,
@@ -29,10 +35,26 @@ import {
   listClockEventsWithEmployeeInRange,
   upsertAdminShift,
 } from '../../services/repositories/clockEventRepository';
+import {
+  createEmployeePayRateResolver,
+  listEmployeePayRatesForEmployees,
+} from '../../services/repositories/employeePayRateRepository';
 import { listEmployees } from '../../services/repositories/employeeRepository';
-import { getPayrollSettings } from '../../services/repositories/settingsRepository';
+import {
+  approvePayrollPeriod,
+  getPayrollPeriodApproval,
+  reopenPayrollPeriod,
+} from '../../services/repositories/payrollPeriodRepository';
+import {
+  getPropertySettings,
+  getPayrollSettings,
+} from '../../services/repositories/settingsRepository';
 import { colors, spacing, typography } from '../../theme';
-import type { ClockEventWithEmployee, EmployeeRecord } from '../../types/database';
+import type {
+  ClockEventWithEmployee,
+  EmployeeRecord,
+  PayrollPeriodApprovalRecord,
+} from '../../types/database';
 import type { RootStackParamList } from '../../types/navigation';
 
 type PayrollHoursScreenProps = NativeStackScreenProps<
@@ -41,6 +63,8 @@ type PayrollHoursScreenProps = NativeStackScreenProps<
 >;
 
 type PayrollHoursState = {
+  approval: PayrollPeriodApprovalRecord | null;
+  exceptions: ReturnType<typeof buildPayrollExceptionReport>;
   payPeriod: ReturnType<typeof getPayPeriodPreviewByHistoryOffset>;
   schedule: {
     payPeriodLength: string;
@@ -59,6 +83,14 @@ type ShiftEntry =
   ReturnType<typeof buildPayrollHoursSummary>['shiftsByEmployee'][number]['shifts'][number];
 type EmployeeTotalEntry =
   ReturnType<typeof buildPayrollHoursSummary>['employeeTotals'][number];
+
+type ExportAction =
+  | 'REPORT'
+  | 'EXCEPTIONS'
+  | 'GENERIC'
+  | 'QUICKBOOKS'
+  | 'GUSTO'
+  | 'ADP';
 
 type ShiftFormState = {
   mode: 'ADD' | 'EDIT' | 'CLOSE';
@@ -316,7 +348,8 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
   const [showAllShiftLogs, setShowAllShiftLogs] = useState(false);
   const [showAllDayTotals, setShowAllDayTotals] = useState(false);
   const [isSavingShiftAction, setIsSavingShiftAction] = useState(false);
-  const [isExportingReport, setIsExportingReport] = useState(false);
+  const [activeExportAction, setActiveExportAction] = useState<ExportAction | null>(null);
+  const [isUpdatingApproval, setIsUpdatingApproval] = useState(false);
   const [shiftForm, setShiftForm] = useState<ShiftFormState | null>(null);
   const [activeShiftPicker, setActiveShiftPicker] = useState<ActiveShiftPicker | null>(null);
 
@@ -328,6 +361,14 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
     setActiveShiftPicker(null);
     setActionMessage(null);
   }, [periodsBack]);
+
+  useEffect(() => {
+    if (!state?.approval) {
+      return;
+    }
+    setShiftForm(null);
+    setActiveShiftPicker(null);
+  }, [state?.approval?.approved_at]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -358,22 +399,33 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
         (event): event is ClockEventWithEmployee => Boolean(event),
       );
       const eventsForSummary = mergePayrollEvents(eventsInRange, carryoverClockOuts);
-      const employeeHourlyRates = new Map(
+      const fallbackEmployeeHourlyRates = new Map(
         allEmployees.map((employee) => [employee.id, employee.hourly_rate]),
+      );
+      const [payRateRows, approval] = await Promise.all([
+        listEmployeePayRatesForEmployees(allEmployees.map((employee) => employee.id)),
+        getPayrollPeriodApproval(payPeriod.periodStartDate),
+      ]);
+      const resolveEmployeeHourlyRate = createEmployeePayRateResolver(
+        payRateRows,
+        fallbackEmployeeHourlyRates,
       );
 
       const summary = buildPayrollHoursSummary(eventsForSummary, {
         periodEndDate: payPeriod.periodEndDate,
         periodStartDate: payPeriod.periodStartDate,
       }, {
-        employeeHourlyRates,
         ot1Multiplier: payrollSettings.ot1Multiplier,
         ot1WeeklyThresholdHours: payrollSettings.ot1WeeklyThresholdHours,
         ot2HolidayDates: payrollSettings.ot2HolidayDates,
         ot2Multiplier: payrollSettings.ot2Multiplier,
+        resolveEmployeeHourlyRate,
       });
+      const exceptions = buildPayrollExceptionReport(summary);
 
       setState({
+        approval,
+        exceptions,
         payPeriod,
         schedule: {
           firstPayrollRunDays: payrollSettings.firstPayrollRunDays,
@@ -425,6 +477,18 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
       : state.summary.dayTotals.slice(-14)
     : [];
   const canGoOlder = state ? !state.payPeriod.isFirstPeriod : false;
+  const isPeriodApproved = Boolean(state?.approval);
+  const exceptionCount = state?.exceptions.totalCount ?? 0;
+  const exceptionSummaryText = state
+    ? exceptionCount === 0
+      ? 'No exception rows were found for this pay period.'
+      : [
+          `${state.exceptions.counts.OPEN_SHIFT} open`,
+          `${state.exceptions.counts.AUTO_CLOCK_OUT} auto`,
+          `${state.exceptions.counts.MISSED_PUNCH} missed`,
+          `${state.exceptions.counts.EDITED_SHIFT} edited`,
+        ].join(' | ')
+    : '';
 
   const visibleShiftGroups = useMemo(() => {
     if (!state) {
@@ -566,6 +630,10 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
   }, [shiftForm]);
 
   const openAddShiftForm = () => {
+    if (!requireUnlockedPeriod('adding shifts in this period')) {
+      return;
+    }
+
     const preferredEmployee =
       employees.find((employee) => employee.id === expandedEmployeeId) ?? employees[0];
     if (!preferredEmployee) {
@@ -595,6 +663,10 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
     employeeName: string,
     shift: ShiftEntry,
   ) => {
+    if (!requireUnlockedPeriod('editing shifts in this period')) {
+      return;
+    }
+
     if (!shift.clockInEventId) {
       setError('This shift cannot be edited because clock-in is missing.');
       return;
@@ -622,18 +694,39 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
     setShiftForm(null);
   };
 
+  const requireUnlockedPeriod = useCallback(
+    (actionLabel: string) => {
+      if (!state?.approval) {
+        return true;
+      }
+
+      setActionMessage(null);
+      setError(
+        `This pay period was approved on ${formatEditedTime(
+          state.approval.approved_at,
+        )}. Reopen it before ${actionLabel}.`,
+      );
+      return false;
+    },
+    [state?.approval],
+  );
+
   const exportCurrentPayPeriodReport = async () => {
     if (!state) {
       return;
     }
 
-    setIsExportingReport(true);
+    setActiveExportAction('REPORT');
     setError(null);
     setActionMessage(null);
     markActivity();
 
     try {
+      const propertySettings = await getPropertySettings();
       await exportPayrollPeriodReportPdf({
+        businessName: propertySettings.propertyName,
+        propertyAddress: propertySettings.propertyAddress,
+        propertyDetails: propertySettings.propertyDetails,
         payPeriod: {
           periodEndDate: state.payPeriod.periodEndDate,
           periodLengthDays: state.payPeriod.periodLengthDays,
@@ -651,12 +744,93 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
           : 'Failed to export payroll report.',
       );
     } finally {
-      setIsExportingReport(false);
+      setActiveExportAction(null);
+    }
+  };
+
+  const exportCurrentPayPeriodExceptions = async () => {
+    if (!state) {
+      return;
+    }
+
+    setActiveExportAction('EXCEPTIONS');
+    setError(null);
+    setActionMessage(null);
+    markActivity();
+
+    try {
+      await exportPayrollExceptionsCsv({
+        exceptions: state.exceptions,
+        payPeriod: {
+          periodEndDate: state.payPeriod.periodEndDate,
+          periodStartDate: state.payPeriod.periodStartDate,
+        },
+      });
+      setActionMessage('Payroll exception CSV exported.');
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error
+          ? exportError.message
+          : 'Failed to export payroll exception CSV.',
+      );
+    } finally {
+      setActiveExportAction(null);
+    }
+  };
+
+  const exportCurrentPayrollTemplate = async (
+    template: PayrollCsvTemplate,
+    exportAction: Exclude<ExportAction, 'REPORT' | 'EXCEPTIONS'>,
+  ) => {
+    if (!state) {
+      return;
+    }
+
+    setActiveExportAction(exportAction);
+    setError(null);
+    setActionMessage(null);
+    markActivity();
+
+    try {
+      const templateTitle =
+        template === 'GENERIC'
+          ? 'Payroll CSV'
+          : template === 'QUICKBOOKS'
+            ? 'QuickBooks payroll template'
+            : template === 'GUSTO'
+              ? 'Gusto payroll template'
+              : 'ADP payroll template';
+      await exportPayrollTemplateCsv({
+        employees,
+        payPeriod: {
+          periodEndDate: state.payPeriod.periodEndDate,
+          periodStartDate: state.payPeriod.periodStartDate,
+        },
+        schedule: {
+          ot1Multiplier: state.schedule.ot1Multiplier,
+          ot2Multiplier: state.schedule.ot2Multiplier,
+        },
+        summary: state.summary,
+        template,
+      });
+      setActionMessage(`${templateTitle} exported.`);
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error
+          ? exportError.message
+          : 'Failed to export payroll CSV.',
+      );
+    } finally {
+      setActiveExportAction(null);
     }
   };
 
   const saveShiftForm = async () => {
-    if (!shiftForm) {
+    if (!shiftForm || !state) {
+      return;
+    }
+
+    if (!requireUnlockedPeriod('saving shifts in this period')) {
       return;
     }
 
@@ -686,6 +860,8 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
         clockOutEventId: shiftForm.clockOutEventId,
         clockOutTimestamp,
         employeeId: shiftForm.employeeId,
+        employeeName: shiftForm.employeeName,
+        mode: shiftForm.mode,
       });
 
       setActionMessage(
@@ -710,6 +886,14 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
     employeeName: string,
     shift: ShiftEntry,
   ) => {
+    if (!state) {
+      return;
+    }
+
+    if (!requireUnlockedPeriod('deleting shifts in this period')) {
+      return;
+    }
+
     if (!shift.clockInEventId && !shift.clockOutEventId) {
       setError('This shift has no deletable events.');
       return;
@@ -735,8 +919,11 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
               try {
                 await deleteAdminShift({
                   clockInEventId: shift.clockInEventId,
+                  clockInTimestamp: shift.clockInTimestamp,
                   clockOutEventId: shift.clockOutEventId,
+                  clockOutTimestamp: shift.clockOutTimestamp,
                   employeeId,
+                  employeeName,
                 });
                 setActionMessage('Shift deleted.');
                 if (
@@ -764,19 +951,96 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
     );
   };
 
+  const changePayrollApproval = async (nextLocked: boolean) => {
+    if (!state) {
+      return;
+    }
+
+    setIsUpdatingApproval(true);
+    setError(null);
+    setActionMessage(null);
+    markActivity();
+
+    try {
+      if (nextLocked) {
+        await approvePayrollPeriod({
+          periodEndDate: state.payPeriod.periodEndDate,
+          periodStartDate: state.payPeriod.periodStartDate,
+        });
+        setActionMessage('Payroll period approved and locked.');
+      } else {
+        await reopenPayrollPeriod({
+          periodEndDate: state.payPeriod.periodEndDate,
+          periodStartDate: state.payPeriod.periodStartDate,
+        });
+        setActionMessage('Payroll period reopened.');
+      }
+
+      setShiftForm(null);
+      setActiveShiftPicker(null);
+      await loadData();
+    } catch (approvalError) {
+      setError(
+        approvalError instanceof Error
+          ? approvalError.message
+          : 'Failed to update payroll period approval.',
+      );
+    } finally {
+      setIsUpdatingApproval(false);
+    }
+  };
+
+  const confirmTogglePayrollApproval = (nextLocked: boolean) => {
+    if (!state) {
+      return;
+    }
+
+    Alert.alert(
+      nextLocked ? 'Approve Payroll Period' : 'Reopen Payroll Period',
+      nextLocked
+        ? `Approve and lock ${formatDay(
+            state.payPeriod.periodStartDate,
+            true,
+          )} - ${formatDay(
+            state.payPeriod.periodEndDate,
+            true,
+          )}? Shift edits for this period will be disabled until reopened.`
+        : `Reopen ${formatDay(
+            state.payPeriod.periodStartDate,
+            true,
+          )} - ${formatDay(
+            state.payPeriod.periodEndDate,
+            true,
+          )}? Shift edits and deletes will be enabled again.`,
+      [
+        {
+          style: 'cancel',
+          text: 'Cancel',
+        },
+        {
+          style: nextLocked ? 'default' : 'destructive',
+          text: nextLocked ? 'Approve' : 'Reopen',
+          onPress: () => {
+            void changePayrollApproval(nextLocked);
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <AdminScrollContainer style={styles.content}>
         <PageHeader
           actions={
             <>
               <PrimaryButton
-                disabled={isLoading || !state || isExportingReport}
+                disabled={isLoading || !state || activeExportAction !== null}
                 fullWidth={isVeryCompactWidth}
                 onPress={() => {
                   void exportCurrentPayPeriodReport();
                 }}
                 style={isCompactWidth && !isVeryCompactWidth ? styles.compactActionButton : undefined}
-                title={isExportingReport ? 'Exporting...' : 'Report'}
+                title={activeExportAction === 'REPORT' ? 'Exporting...' : 'Report'}
                 variant="success"
               />
               <PrimaryButton
@@ -917,6 +1181,57 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                   </Pressable>
                 ))}
               </View>
+
+              <View style={styles.approvalStatusRow}>
+                <Text style={styles.approvalStatusLabel}>Period Status</Text>
+                <Text
+                  style={[
+                    styles.approvalStatusBadge,
+                    isPeriodApproved
+                      ? styles.approvalStatusBadgeLocked
+                      : styles.approvalStatusBadgeOpen,
+                  ]}
+                >
+                  {isPeriodApproved ? 'LOCKED' : 'OPEN'}
+                </Text>
+              </View>
+              <Text style={styles.periodMeta}>
+                {isPeriodApproved && state.approval
+                  ? `Approved ${formatEditedTime(
+                      state.approval.approved_at,
+                    )}. Shift add, edit, and delete actions are disabled for this period.`
+                  : 'This pay period is still editable. Approve it when the totals are finalized to lock payroll changes.'}
+              </Text>
+              <View style={styles.periodActionRow}>
+                <Pressable
+                  disabled={isUpdatingApproval}
+                  onPress={() => {
+                    confirmTogglePayrollApproval(!isPeriodApproved);
+                  }}
+                  style={[
+                    styles.inlineActionButton,
+                    isPeriodApproved
+                      ? styles.inlineActionButtonWarning
+                      : styles.inlineActionButtonSuccess,
+                    isUpdatingApproval ? styles.inlineActionButtonDisabled : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.inlineActionText,
+                      isPeriodApproved
+                        ? styles.inlineActionTextWarning
+                        : styles.inlineActionTextSuccess,
+                    ]}
+                  >
+                    {isUpdatingApproval
+                      ? 'Saving...'
+                      : isPeriodApproved
+                        ? 'Reopen Period'
+                        : 'Approve & Lock'}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
 
             <View style={styles.metricsWrap}>
@@ -944,6 +1259,152 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                 <Text style={styles.metricLabel}>Avg / Day</Text>
                 <Text style={styles.metricValue}>{formatHours(avgDailyHours)}</Text>
               </View>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Exceptions</Text>
+                <Text style={styles.metricValue}>{exceptionCount}</Text>
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Exports & Exceptions</Text>
+              <Text style={styles.periodMeta}>{exceptionSummaryText}</Text>
+              <View style={styles.periodActionRow}>
+                <Pressable
+                  disabled={activeExportAction !== null}
+                  onPress={() => {
+                    void exportCurrentPayPeriodExceptions();
+                  }}
+                  style={[
+                    styles.inlineActionButton,
+                    activeExportAction === 'EXCEPTIONS'
+                      ? styles.inlineActionButtonActive
+                      : null,
+                    activeExportAction !== null && activeExportAction !== 'EXCEPTIONS'
+                      ? styles.inlineActionButtonDisabled
+                      : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.inlineActionText,
+                      activeExportAction === 'EXCEPTIONS'
+                        ? styles.inlineActionTextActive
+                        : null,
+                    ]}
+                  >
+                    {activeExportAction === 'EXCEPTIONS'
+                      ? 'Exporting Exceptions...'
+                      : 'Exceptions CSV'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={activeExportAction !== null}
+                  onPress={() => {
+                    void exportCurrentPayrollTemplate('GENERIC', 'GENERIC');
+                  }}
+                  style={[
+                    styles.inlineActionButton,
+                    activeExportAction === 'GENERIC'
+                      ? styles.inlineActionButtonActive
+                      : null,
+                    activeExportAction !== null && activeExportAction !== 'GENERIC'
+                      ? styles.inlineActionButtonDisabled
+                      : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.inlineActionText,
+                      activeExportAction === 'GENERIC'
+                        ? styles.inlineActionTextActive
+                        : null,
+                    ]}
+                  >
+                    {activeExportAction === 'GENERIC' ? 'Exporting CSV...' : 'Payroll CSV'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={activeExportAction !== null}
+                  onPress={() => {
+                    void exportCurrentPayrollTemplate('QUICKBOOKS', 'QUICKBOOKS');
+                  }}
+                  style={[
+                    styles.inlineActionButton,
+                    activeExportAction === 'QUICKBOOKS'
+                      ? styles.inlineActionButtonActive
+                      : null,
+                    activeExportAction !== null && activeExportAction !== 'QUICKBOOKS'
+                      ? styles.inlineActionButtonDisabled
+                      : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.inlineActionText,
+                      activeExportAction === 'QUICKBOOKS'
+                        ? styles.inlineActionTextActive
+                        : null,
+                    ]}
+                  >
+                    {activeExportAction === 'QUICKBOOKS' ? 'Exporting QB...' : 'QuickBooks'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={activeExportAction !== null}
+                  onPress={() => {
+                    void exportCurrentPayrollTemplate('GUSTO', 'GUSTO');
+                  }}
+                  style={[
+                    styles.inlineActionButton,
+                    activeExportAction === 'GUSTO'
+                      ? styles.inlineActionButtonActive
+                      : null,
+                    activeExportAction !== null && activeExportAction !== 'GUSTO'
+                      ? styles.inlineActionButtonDisabled
+                      : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.inlineActionText,
+                      activeExportAction === 'GUSTO'
+                        ? styles.inlineActionTextActive
+                        : null,
+                    ]}
+                  >
+                    {activeExportAction === 'GUSTO' ? 'Exporting Gusto...' : 'Gusto'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={activeExportAction !== null}
+                  onPress={() => {
+                    void exportCurrentPayrollTemplate('ADP', 'ADP');
+                  }}
+                  style={[
+                    styles.inlineActionButton,
+                    activeExportAction === 'ADP'
+                      ? styles.inlineActionButtonActive
+                      : null,
+                    activeExportAction !== null && activeExportAction !== 'ADP'
+                      ? styles.inlineActionButtonDisabled
+                      : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.inlineActionText,
+                      activeExportAction === 'ADP'
+                        ? styles.inlineActionTextActive
+                        : null,
+                    ]}
+                  >
+                    {activeExportAction === 'ADP' ? 'Exporting ADP...' : 'ADP'}
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={styles.exportSupportText}>
+                QuickBooks, Gusto, and ADP exports are CSV templates for mapping into your payroll provider.
+              </Text>
             </View>
 
             <View style={styles.dualColumnRow}>
@@ -1353,13 +1814,21 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                           <Text style={styles.quickAdjustText}>Done</Text>
                         </Pressable>
                       </View>
-                      <DateTimePicker
-                        display={activeShiftPicker.mode === 'date' ? 'inline' : 'spinner'}
-                        mode={activeShiftPicker.mode}
-                        onChange={handleIosShiftPickerChange}
-                        themeVariant="dark"
-                        value={activeShiftPickerValue}
-                      />
+                      <View style={styles.pickerControlSurface}>
+                        <DateTimePicker
+                          accentColor={colors.primary}
+                          display={activeShiftPicker.mode === 'date' ? 'inline' : 'spinner'}
+                          mode={activeShiftPicker.mode}
+                          onChange={handleIosShiftPickerChange}
+                          textColor={
+                            activeShiftPicker.mode === 'time'
+                              ? colors.textPrimary
+                              : undefined
+                          }
+                          themeVariant="light"
+                          value={activeShiftPickerValue}
+                        />
+                      </View>
                     </View>
                   ) : null}
 
@@ -1370,12 +1839,18 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                     ]}
                   >
                     <PrimaryButton
-                      disabled={isSavingShiftAction}
+                      disabled={isSavingShiftAction || isPeriodApproved}
                       fullWidth={isVeryCompactWidth}
                       onPress={() => {
                         void saveShiftForm();
                       }}
-                      title={isSavingShiftAction ? 'Saving...' : 'Save Shift'}
+                      title={
+                        isPeriodApproved
+                          ? 'Period Locked'
+                          : isSavingShiftAction
+                            ? 'Saving...'
+                            : 'Save Shift'
+                      }
                       variant="success"
                     />
                     <PrimaryButton
@@ -1394,13 +1869,19 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                 <Text style={styles.sectionTitle}>Shift Logs</Text>
                 <View style={styles.shiftHeaderActions}>
                   <Pressable
+                    disabled={isPeriodApproved}
                     onPress={() => {
                       markActivity();
                       openAddShiftForm();
                     }}
-                    style={styles.inlineActionButton}
+                    style={[
+                      styles.inlineActionButton,
+                      isPeriodApproved ? styles.inlineActionButtonDisabled : null,
+                    ]}
                   >
-                    <Text style={styles.inlineActionText}>Add Shift</Text>
+                    <Text style={styles.inlineActionText}>
+                      {isPeriodApproved ? 'Locked' : 'Add Shift'}
+                    </Text>
                   </Pressable>
                   <Pressable
                     onPress={() => {
@@ -1471,11 +1952,15 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                           {(shift.clockInEventId || shift.clockOutEventId) &&
                           shift.status !== 'UNMATCHED_OUT' ? (
                             <Pressable
+                              disabled={isPeriodApproved}
                               onPress={() => {
                                 markActivity();
                                 openEditShiftForm(employee.employeeId, employee.employeeName, shift);
                               }}
-                              style={styles.shiftInlineButton}
+                              style={[
+                                styles.shiftInlineButton,
+                                isPeriodApproved ? styles.shiftInlineButtonDisabled : null,
+                              ]}
                             >
                               <Text style={styles.shiftInlineButtonText}>
                                 {shift.status === 'OPEN' ? 'Close/Edit' : 'Edit'}
@@ -1484,11 +1969,16 @@ export default function PayrollHoursScreen({ navigation }: PayrollHoursScreenPro
                           ) : null}
                           {(shift.clockInEventId || shift.clockOutEventId) ? (
                             <Pressable
+                              disabled={isPeriodApproved}
                               onPress={() => {
                                 markActivity();
                                 confirmDeleteShift(employee.employeeId, employee.employeeName, shift);
                               }}
-                              style={[styles.shiftInlineButton, styles.shiftInlineDeleteButton]}
+                              style={[
+                                styles.shiftInlineButton,
+                                styles.shiftInlineDeleteButton,
+                                isPeriodApproved ? styles.shiftInlineButtonDisabled : null,
+                              ]}
                             >
                               <Text
                                 style={[
@@ -1678,6 +2168,41 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     gap: spacing.sm,
   },
+  approvalStatusBadge: {
+    ...typography.caption,
+    borderRadius: 999,
+    borderWidth: 1,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    textTransform: 'uppercase',
+  },
+  approvalStatusBadgeLocked: {
+    backgroundColor: colors.warningMuted,
+    borderColor: colors.warning,
+    color: colors.warning,
+  },
+  approvalStatusBadgeOpen: {
+    backgroundColor: colors.successMuted,
+    borderColor: colors.success,
+    color: colors.success,
+  },
+  approvalStatusLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  approvalStatusRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.md,
+  },
+  exportSupportText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+  },
   inlineActionButton: {
     backgroundColor: colors.surfaceMuted,
     borderColor: colors.border,
@@ -1690,6 +2215,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
+  inlineActionButtonDisabled: {
+    opacity: 0.45,
+  },
+  inlineActionButtonSuccess: {
+    backgroundColor: colors.successMuted,
+    borderColor: colors.success,
+  },
+  inlineActionButtonWarning: {
+    backgroundColor: colors.warningMuted,
+    borderColor: colors.warning,
+  },
   inlineActionText: {
     ...typography.caption,
     color: colors.textPrimary,
@@ -1697,6 +2233,12 @@ const styles = StyleSheet.create({
   },
   inlineActionTextActive: {
     color: colors.textInverse,
+  },
+  inlineActionTextSuccess: {
+    color: colors.success,
+  },
+  inlineActionTextWarning: {
+    color: colors.warning,
   },
   inlineLinkButton: {
     marginTop: spacing.sm,
@@ -1744,6 +2286,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.sm,
     marginTop: spacing.md,
+  },
+  periodActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
   },
   quickHistoryChip: {
     backgroundColor: colors.surfaceMuted,
@@ -1852,8 +2400,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   pickerPanel: {
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
+    backgroundColor: colors.surfaceHighlight,
+    borderColor: colors.borderStrong,
     borderRadius: 18,
     borderWidth: 1,
     marginTop: spacing.md,
@@ -1869,6 +2417,15 @@ const styles = StyleSheet.create({
   pickerPanelTitle: {
     ...typography.label,
     color: colors.textPrimary,
+  },
+  pickerControlSurface: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
   },
   quickAdjustButton: {
     backgroundColor: colors.surfaceMuted,
@@ -1980,6 +2537,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
+  },
+  shiftInlineButtonDisabled: {
+    opacity: 0.45,
   },
   shiftInlineButtonText: {
     ...typography.caption,

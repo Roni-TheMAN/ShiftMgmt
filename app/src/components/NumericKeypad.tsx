@@ -1,12 +1,16 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
-import { colors, spacing, typography } from '../theme';
+import { colors, radius, spacing, typography, withAlpha } from '../theme';
 
 type NumericKeypadProps = {
   onDigitPress: (digit: string) => void;
   onClear: () => void;
   onBackspace: () => void;
   disabled?: boolean;
+  keyMinHeight?: number;
+  compactKeyMinHeight?: number;
+  keyGap?: number;
+  rowGap?: number;
 };
 
 const keypadRows = [
@@ -21,6 +25,10 @@ export default function NumericKeypad({
   onClear,
   onBackspace,
   disabled = false,
+  keyMinHeight = 76,
+  compactKeyMinHeight = 64,
+  keyGap = spacing.sm,
+  rowGap = spacing.sm,
 }: NumericKeypadProps) {
   const { isCompactWidth, isShortHeight } = useResponsiveLayout();
   const useCompactKeys = isCompactWidth || isShortHeight;
@@ -44,9 +52,9 @@ export default function NumericKeypad({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { gap: rowGap }]}>
       {keypadRows.map((row) => (
-        <View key={row.join('-')} style={styles.row}>
+        <View key={row.join('-')} style={[styles.row, { gap: keyGap }]}>
           {row.map((key) => {
             const isUtility = key === 'CLR' || key === 'DEL';
             return (
@@ -57,6 +65,9 @@ export default function NumericKeypad({
                 onPress={() => handlePress(key)}
                 style={({ pressed }) => [
                   styles.key,
+                  {
+                    minHeight: useCompactKeys ? compactKeyMinHeight : keyMinHeight,
+                  },
                   useCompactKeys ? styles.keyCompact : null,
                   isUtility ? styles.utilityKey : null,
                   pressed ? styles.keyPressed : null,
@@ -83,31 +94,35 @@ export default function NumericKeypad({
 
 const styles = StyleSheet.create({
   container: {
-    gap: spacing.sm,
     width: '100%',
   },
   key: {
     alignItems: 'center',
-    backgroundColor: colors.surfaceMuted,
-    borderColor: colors.border,
-    borderRadius: 18,
+    backgroundColor: colors.backgrounds.card,
+    borderColor: colors.borders.default,
+    borderRadius: radius.card,
     borderWidth: 1,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 76,
+    shadowColor: withAlpha(colors.shadows.card, 1),
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
   },
   keyCompact: {
     minHeight: 64,
   },
   keyDisabled: {
-    opacity: 0.5,
+    opacity: 0.55,
   },
   keyPressed: {
-    backgroundColor: colors.surfaceHighlight,
+    backgroundColor: colors.tints.bronze,
+    borderColor: withAlpha(colors.accents.bronze, 0.35),
   },
   keyText: {
-    ...typography.h2,
-    color: colors.textPrimary,
+    ...typography.sectionTitle,
+    color: colors.text.primary,
+    fontVariant: ['tabular-nums'],
   },
   keyTextCompact: {
     fontSize: 22,
@@ -115,13 +130,13 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
-    gap: spacing.sm,
   },
   utilityKey: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.backgrounds.secondary,
+    borderColor: colors.borders.subtle,
   },
   utilityKeyText: {
-    ...typography.label,
-    color: colors.textSecondary,
+    ...typography.bodySm,
+    color: colors.text.secondary,
   },
 });

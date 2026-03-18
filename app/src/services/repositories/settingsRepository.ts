@@ -1,6 +1,7 @@
 import { ADMIN_PIN_LENGTH, DEFAULT_ADMIN_PIN } from '../../constants/app';
 import { getDatabase } from '../db/database';
 import { hashPin, verifyPin } from '../security/pbkdf2';
+import { createAuditLog } from './auditRepository';
 
 const ADMIN_PIN_KEY = 'admin_pin_hash';
 const PAY_PERIOD_LENGTH_KEY = 'settings_pay_period_length';
@@ -297,12 +298,28 @@ export async function changeAdminPin(currentPin: string, nextPin: string) {
 
   const nextHash = await hashPin(nextPin);
   await upsertSetting(ADMIN_PIN_KEY, nextHash);
+  await createAuditLog({
+    action: 'ADMIN_PIN_CHANGE',
+    details: {
+      changedAt: nowIso(),
+    },
+    entityType: 'SECURITY',
+    summary: 'Changed the admin PIN.',
+  });
   return true;
 }
 
 export async function resetAdminPinToDefault() {
   const defaultHash = await hashPin(DEFAULT_ADMIN_PIN);
   await upsertSetting(ADMIN_PIN_KEY, defaultHash);
+  await createAuditLog({
+    action: 'ADMIN_PIN_RESET',
+    details: {
+      resetToDefault: true,
+    },
+    entityType: 'SECURITY',
+    summary: 'Reset the admin PIN to the default value.',
+  });
 }
 
 export async function getPayrollSettings(): Promise<PayrollSettings> {
@@ -463,6 +480,7 @@ export async function savePayrollSettings(settings: PayrollSettings) {
     ? settings.firstPayrollRunDays
     : null;
   validateFirstPayrollRunDays(normalizedFirstPayrollRunDays, settings.payPeriodLength);
+  const currentSettings = await getPayrollSettings();
 
   await Promise.all([
     upsertSetting(PAY_PERIOD_LENGTH_KEY, settings.payPeriodLength),
@@ -487,6 +505,38 @@ export async function savePayrollSettings(settings: PayrollSettings) {
           String(normalizedFirstPayrollRunDays),
         ),
   ]);
+
+  const hasChanges =
+    currentSettings.autoClockOutEnabled !== settings.autoClockOutEnabled ||
+    currentSettings.autoClockOutHours !== settings.autoClockOutHours ||
+    currentSettings.firstPayrollRunDays !== normalizedFirstPayrollRunDays ||
+    currentSettings.ot1Multiplier !== settings.ot1Multiplier ||
+    currentSettings.ot1WeeklyThresholdHours !== settings.ot1WeeklyThresholdHours ||
+    currentSettings.ot2Multiplier !== settings.ot2Multiplier ||
+    JSON.stringify(currentSettings.ot2HolidayDates) !== JSON.stringify(normalizedHolidayDates) ||
+    currentSettings.payPeriodLength !== settings.payPeriodLength ||
+    currentSettings.payPeriodStartDate !== settings.payPeriodStartDate ||
+    currentSettings.payPeriodStartDay !== settings.payPeriodStartDay;
+
+  if (hasChanges) {
+    await createAuditLog({
+      action: 'PAYROLL_SETTINGS_UPDATE',
+      details: {
+        autoClockOutEnabled: settings.autoClockOutEnabled,
+        autoClockOutHours: settings.autoClockOutHours,
+        firstPayrollRunDays: normalizedFirstPayrollRunDays,
+        ot1Multiplier: settings.ot1Multiplier,
+        ot1WeeklyThresholdHours: settings.ot1WeeklyThresholdHours,
+        ot2HolidayDates: normalizedHolidayDates,
+        ot2Multiplier: settings.ot2Multiplier,
+        payPeriodLength: settings.payPeriodLength,
+        payPeriodStartDate: settings.payPeriodStartDate,
+        payPeriodStartDay: settings.payPeriodStartDay,
+      },
+      entityType: 'PAYROLL_SETTINGS',
+      summary: 'Updated payroll settings.',
+    });
+  }
 }
 
 export async function getPropertySettings(): Promise<PropertySettings> {
@@ -510,10 +560,25 @@ export async function savePropertySettings(settings: PropertySettings) {
     propertyName: normalizePropertyText(settings.propertyName),
   };
   validatePropertySettings(normalized);
+  const currentSettings = await getPropertySettings();
 
   await Promise.all([
     upsertSetting(PROPERTY_NAME_KEY, normalized.propertyName),
     upsertSetting(PROPERTY_ADDRESS_KEY, normalized.propertyAddress),
     upsertSetting(PROPERTY_DETAILS_KEY, normalized.propertyDetails),
   ]);
+
+  const hasChanges =
+    currentSettings.propertyAddress !== normalized.propertyAddress ||
+    currentSettings.propertyDetails !== normalized.propertyDetails ||
+    currentSettings.propertyName !== normalized.propertyName;
+
+  if (hasChanges) {
+    await createAuditLog({
+      action: 'PROPERTY_SETTINGS_UPDATE',
+      details: normalized,
+      entityType: 'PROPERTY_SETTINGS',
+      summary: 'Updated property profile settings.',
+    });
+  }
 }

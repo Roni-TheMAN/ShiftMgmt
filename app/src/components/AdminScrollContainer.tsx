@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAdminSession } from '../context/AdminSessionContext';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
-import { spacing } from '../theme';
+import { layout, spacing } from '../theme';
 import ScreenContainer from './ScreenContainer';
 
 type AdminScrollContainerProps = PropsWithChildren<{
@@ -47,9 +47,9 @@ export default function AdminScrollContainer({
             style={[
               styles.inner,
               {
-                paddingBottom:
-                  insets.bottom + spacing.xl + (isShortHeight ? spacing.lg : spacing.md),
                 paddingHorizontal: horizontalPadding,
+                paddingBottom:
+                  insets.bottom + spacing.xl + (isShortHeight ? spacing.lg : spacing.compact),
               },
               style,
             ]}
@@ -65,8 +65,8 @@ export default function AdminScrollContainer({
 const styles = StyleSheet.create({
   inner: {
     alignSelf: 'center',
-    maxWidth: 1360,
-    paddingTop: spacing.lg,
+    maxWidth: layout.maxWidth.admin,
+    paddingTop: spacing.compact,
     width: '100%',
   },
   outer: {

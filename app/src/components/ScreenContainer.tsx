@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors } from '../theme';
+import { colors, layout, withAlpha } from '../theme';
 
 type ScreenContainerProps = {
   children: ReactNode;
@@ -15,10 +15,9 @@ export default function ScreenContainer({
   return (
     <View style={styles.root}>
       <View pointerEvents="none" style={styles.backdrop}>
-        <View style={[styles.orb, styles.orbPrimary]} />
-        <View style={[styles.orb, styles.orbInfo]} />
-        <View style={[styles.orb, styles.orbDanger]} />
-        <View style={styles.gridOverlay} />
+        <View style={styles.topWash} />
+        <View style={styles.topRule} />
+        <View style={styles.bottomWash} />
       </View>
       <SafeAreaView style={[styles.container, style]}>{children}</SafeAreaView>
     </View>
@@ -29,45 +28,37 @@ const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFillObject,
   },
+  bottomWash: {
+    backgroundColor: withAlpha(colors.accents.olive, 0.035),
+    bottom: 0,
+    height: 180,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
   container: {
     backgroundColor: 'transparent',
     flex: 1,
   },
-  gridOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.01)',
-    borderColor: 'rgba(255, 255, 255, 0.015)',
-    borderWidth: 1,
-    opacity: 0.25,
-  },
-  orb: {
-    borderRadius: 999,
-    position: 'absolute',
-  },
-  orbDanger: {
-    backgroundColor: colors.glowDanger,
-    bottom: -240,
-    height: 420,
-    left: -160,
-    width: 420,
-  },
-  orbInfo: {
-    backgroundColor: colors.glowInfo,
-    height: 380,
-    right: -120,
-    top: 180,
-    width: 380,
-  },
-  orbPrimary: {
-    backgroundColor: colors.glowPrimary,
-    height: 420,
-    left: -90,
-    top: -150,
-    width: 420,
-  },
   root: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.backgrounds.canvas,
     flex: 1,
-    overflow: 'hidden',
+  },
+  topRule: {
+    backgroundColor: withAlpha(colors.borders.strong, 0.5),
+    height: StyleSheet.hairlineWidth,
+    left: layout.paddingX.compact,
+    opacity: 0.9,
+    position: 'absolute',
+    right: layout.paddingX.compact,
+    top: 0,
+  },
+  topWash: {
+    backgroundColor: withAlpha(colors.accents.bronze, 0.05),
+    height: 160,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
   },
 });

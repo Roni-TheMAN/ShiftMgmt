@@ -15,12 +15,18 @@ import PageHeader from '../../components/ui/PageHeader';
 import StatCard from '../../components/ui/StatCard';
 import StatusChip from '../../components/ui/StatusChip';
 import SurfaceCard from '../../components/ui/SurfaceCard';
-import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { exportClockEventsCsv } from '../../services/export/csvExport';
 import { countClockEvents } from '../../services/repositories/clockEventRepository';
 import { countEmployees } from '../../services/repositories/employeeRepository';
-import { colors, spacing, typography } from '../../theme';
+import {
+  colors,
+  radius,
+  spacing,
+  typography,
+  withAlpha,
+} from '../../theme';
 import type { RootStackParamList } from '../../types/navigation';
 
 type AdminDashboardScreenProps = NativeStackScreenProps<
@@ -34,12 +40,45 @@ type SummaryState = {
   totalEvents: number;
 };
 
+type QuickActionTone = 'default' | 'accent' | 'info' | 'warning' | 'danger';
+
 type QuickActionProps = {
   title: string;
   detail: string;
   accent: string;
-  tone?: 'default' | 'accent' | 'info' | 'warning' | 'danger';
+  tone?: QuickActionTone;
   onPress: () => void;
+};
+
+const quickActionPalette: Record<
+  QuickActionTone,
+  { badgeBg: string; badgeText: string; surfaceTone: QuickActionTone }
+> = {
+  accent: {
+    badgeBg: colors.tints.bronze,
+    badgeText: colors.accents.bronze,
+    surfaceTone: 'accent',
+  },
+  danger: {
+    badgeBg: colors.tints.danger,
+    badgeText: colors.states.danger,
+    surfaceTone: 'danger',
+  },
+  default: {
+    badgeBg: colors.backgrounds.secondary,
+    badgeText: colors.text.secondary,
+    surfaceTone: 'default',
+  },
+  info: {
+    badgeBg: withAlpha(colors.accents.bronze, 0.12),
+    badgeText: colors.accents.bronze,
+    surfaceTone: 'info',
+  },
+  warning: {
+    badgeBg: colors.tints.terracotta,
+    badgeText: colors.accents.terracotta,
+    surfaceTone: 'warning',
+  },
 };
 
 function QuickAction({
@@ -49,18 +88,29 @@ function QuickAction({
   title,
   tone = 'default',
 }: QuickActionProps) {
+  const palette = quickActionPalette[tone];
+
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.actionTile, pressed ? styles.actionTilePressed : null]}>
-      <SurfaceCard padding="lg" style={styles.actionTileCard} tone={tone}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.actionTile, pressed ? styles.actionTilePressed : null]}
+    >
+      <SurfaceCard padding="lg" style={styles.actionTileCard} tone={palette.surfaceTone}>
         <View style={styles.actionTileInner}>
-          <View style={styles.actionAccent}>
-            <Text style={styles.actionAccentText}>{accent}</Text>
+          <View style={styles.actionTileTop}>
+            <View style={[styles.actionAccent, { backgroundColor: palette.badgeBg }]}>
+              <Text style={[styles.actionAccentText, { color: palette.badgeText }]}>
+                {accent}
+              </Text>
+            </View>
+            <Text style={styles.actionArrow}>{'\u203A'}</Text>
           </View>
+
           <View style={styles.actionTextWrap}>
             <Text style={styles.actionTitle}>{title}</Text>
             <Text style={styles.actionDetail}>{detail}</Text>
           </View>
-          <Text style={styles.actionArrow}>{'>'}</Text>
         </View>
       </SurfaceCard>
     </Pressable>
@@ -135,7 +185,7 @@ export default function AdminDashboardScreen({
                   void handleExport();
                 }}
                 title={isExporting ? 'Exporting...' : 'Export CSV'}
-                variant="success"
+                variant="primary"
               />
               <PrimaryButton
                 fullWidth={isVeryCompactWidth}
@@ -143,43 +193,69 @@ export default function AdminDashboardScreen({
                   logout();
                 }}
                 title="Admin Logout"
-                variant="neutral"
+                variant="secondary"
               />
             </>
           }
           badgeLabel="Ready"
           badgeTone="success"
-          subtitle="Manage employees, logs, payroll reporting, and kiosk settings from one control surface."
+          subtitle="Manage employees, logs, payroll reporting, and kiosk settings from one organized control surface."
           title="Admin Dashboard"
         />
 
-        <View style={[styles.summaryRow, isCompactWidth ? styles.summaryRowCompact : null]}>
-          <StatCard
-            label="Active Employees"
-            marker="EMP"
-            subtitle={`of ${summary.totalEmployees} total`}
-            tone="accent"
-            value={String(summary.activeEmployees)}
-          />
-          <StatCard
-            label="Clock Events"
-            marker="LOG"
-            subtitle="Total recorded"
-            tone="info"
-            value={String(summary.totalEvents)}
-          />
-          <StatCard
-            label="System Status"
-            marker={isLoadingSummary ? '...' : 'OK'}
-            subtitle={isLoadingSummary ? 'Refreshing summary data' : 'Kiosk operational'}
-            tone={isLoadingSummary ? 'info' : 'accent'}
-            value={isLoadingSummary ? 'Loading' : 'Ready'}
-          />
-        </View>
+        <SurfaceCard padding="lg" style={styles.summaryShell} tone="info">
+          <View style={[styles.summaryTopRow, isCompactWidth ? styles.summaryTopRowCompact : null]}>
+            <View style={styles.summaryIntro}>
+              <Text style={styles.summaryEyebrow}>Overview</Text>
+              <Text style={styles.summaryTitle}>Today&apos;s control surface</Text>
+              <Text style={styles.summaryDescription}>
+                Review staffing, recent activity, and operational status before moving into detail.
+              </Text>
+            </View>
+
+            <View style={styles.summaryStatusWrap}>
+              {isLoadingSummary ? (
+                <View style={styles.summaryLoading}>
+                  <ActivityIndicator color={colors.accents.bronze} size="small" />
+                  <Text style={styles.summaryLoadingText}>Refreshing summary</Text>
+                </View>
+              ) : (
+                <StatusChip label="Operational" tone="success" />
+              )}
+            </View>
+          </View>
+
+          <View style={[styles.summaryRow, isCompactWidth ? styles.summaryRowCompact : null]}>
+            <StatCard
+              label="Active Employees"
+              marker="Team"
+              subtitle={`of ${summary.totalEmployees} total`}
+              tone="accent"
+              value={String(summary.activeEmployees)}
+            />
+            <StatCard
+              label="Clock Events"
+              marker="Logs"
+              subtitle="Total recorded"
+              tone="info"
+              value={String(summary.totalEvents)}
+            />
+            <StatCard
+              label="System Status"
+              marker={isLoadingSummary ? 'Sync' : 'Ready'}
+              subtitle={isLoadingSummary ? 'Refreshing summary data' : 'Kiosk operational'}
+              tone={isLoadingSummary ? 'info' : 'accent'}
+              value={isLoadingSummary ? 'Loading' : 'Ready'}
+            />
+          </View>
+        </SurfaceCard>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          {isLoadingSummary ? <ActivityIndicator color={colors.primary} size="small" /> : null}
+          <View>
+            <Text style={styles.sectionEyebrow}>Actions</Text>
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+          </View>
+          {isLoadingSummary ? <StatusChip label="Updating" size="sm" tone="info" /> : null}
         </View>
 
         <View style={[styles.actionsGrid, isCompactWidth ? styles.actionsGridCompact : null]}>
@@ -191,24 +267,27 @@ export default function AdminDashboardScreen({
               navigation.navigate('AdminEmployees');
             }}
             title="Manage Employees"
+            tone="accent"
           />
           <QuickAction
             accent="LOG"
-            detail="Review clock in and out history with photos."
+            detail="Review clock in and out history with saved photos."
             onPress={() => {
               markActivity();
               navigation.navigate('AdminLogs');
             }}
             title="View Clock Logs"
+            tone="default"
           />
           <QuickAction
             accent="PAY"
-            detail="Inspect payroll periods and shift-level detail."
+            detail="Inspect pay periods, hours, and shift-level detail."
             onPress={() => {
               markActivity();
               navigation.navigate('AdminPayrollHours');
             }}
             title="Payroll Hours"
+            tone="info"
           />
           <QuickAction
             accent="SET"
@@ -218,6 +297,7 @@ export default function AdminDashboardScreen({
               navigation.navigate('AdminSettings');
             }}
             title="Settings"
+            tone="default"
           />
           <QuickAction
             accent="PIN"
@@ -227,7 +307,7 @@ export default function AdminDashboardScreen({
               navigation.navigate('AdminChangePin');
             }}
             title="Change Admin PIN"
-            tone="info"
+            tone="warning"
           />
           <QuickAction
             accent="DEL"
@@ -257,23 +337,24 @@ export default function AdminDashboardScreen({
 const styles = StyleSheet.create({
   actionAccent: {
     alignItems: 'center',
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 18,
-    height: 46,
+    borderRadius: radius.pill,
     justifyContent: 'center',
-    width: 46,
+    minHeight: 30,
+    minWidth: 52,
+    paddingHorizontal: spacing.sm,
   },
   actionAccentText: {
-    ...typography.eyebrow,
-    color: colors.textSecondary,
+    ...typography.micro,
+    textTransform: 'uppercase',
   },
   actionArrow: {
-    ...typography.h2,
-    color: colors.textMuted,
+    ...typography.sectionTitle,
+    color: colors.text.muted,
+    lineHeight: 24,
   },
   actionDetail: {
     ...typography.body,
-    color: colors.textSecondary,
+    color: colors.text.secondary,
     marginTop: spacing.xs,
   },
   actionTextWrap: {
@@ -283,19 +364,24 @@ const styles = StyleSheet.create({
     flexBasis: '48%',
   },
   actionTileCard: {
-    minHeight: 138,
+    minHeight: 176,
   },
   actionTileInner: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
+    flex: 1,
+    justifyContent: 'space-between',
   },
   actionTilePressed: {
-    opacity: 0.94,
+    opacity: 0.95,
+  },
+  actionTileTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
   },
   actionTitle: {
-    ...typography.h2,
-    color: colors.textPrimary,
+    ...typography.cardTitle,
+    color: colors.text.primary,
   },
   actionsGrid: {
     flexDirection: 'row',
@@ -306,37 +392,88 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
   },
   content: {
-    gap: spacing.lg,
+    gap: spacing.section,
     paddingBottom: spacing.xxl,
   },
   feedback: {
     ...typography.body,
-    color: colors.textSecondary,
+    color: colors.text.secondary,
     flex: 1,
   },
   feedbackCard: {
-    marginTop: spacing.sm,
+    marginTop: spacing.xs,
   },
   feedbackRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  sectionEyebrow: {
+    ...typography.micro,
+    color: colors.text.muted,
+    textTransform: 'uppercase',
+  },
   sectionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: spacing.xs,
   },
   sectionTitle: {
-    ...typography.h2,
-    color: colors.textPrimary,
+    ...typography.sectionTitle,
+    color: colors.text.primary,
+    marginTop: spacing.xs,
+  },
+  summaryDescription: {
+    ...typography.body,
+    color: colors.text.secondary,
+    marginTop: spacing.sm,
+    maxWidth: 620,
+  },
+  summaryEyebrow: {
+    ...typography.micro,
+    color: colors.text.muted,
+    textTransform: 'uppercase',
+  },
+  summaryIntro: {
+    flex: 1,
+  },
+  summaryLoading: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  summaryLoadingText: {
+    ...typography.bodySm,
+    color: colors.text.secondary,
   },
   summaryRow: {
     flexDirection: 'row',
     gap: spacing.md,
+    marginTop: spacing.lg,
   },
   summaryRowCompact: {
     flexDirection: 'column',
+  },
+  summaryShell: {
+    minHeight: 0,
+  },
+  summaryStatusWrap: {
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    minWidth: 150,
+  },
+  summaryTitle: {
+    ...typography.sectionTitle,
+    color: colors.text.primary,
+    marginTop: spacing.xs,
+  },
+  summaryTopRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  summaryTopRowCompact: {
+    flexDirection: 'column',
+    gap: spacing.md,
   },
 });

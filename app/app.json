@@ -4,7 +4,7 @@
     "slug": "ShiftMgmt",
     "softwareKeyboardLayoutMode": "resize",
     "version": "1.0.0",
-    "orientation": "default",
+    "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
@@ -13,6 +13,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "requireFullScreen": true,
       "supportsTablet": true,
       "bundleIdentifier": "com.ronit06.ShiftMgmt",
       "infoPlist": {
@@ -23,7 +24,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.ronit06.ShiftMgmt"
     },
     "web": {
       "favicon": "./assets/favicon.png"

@@ -2,11 +2,17 @@ import { EMPLOYEE_PIN_LENGTH } from '../../constants/app';
 import type { EmployeeRecord } from '../../types/database';
 import { getDatabase } from '../db/database';
 import { hashPin, verifyPin } from '../security/pbkdf2';
+import { insertAuditLog } from './auditRepository';
+import {
+  getLatestEmployeePayRate,
+  upsertEmployeePayRateRecord,
+} from './employeePayRateRepository';
 
 export type EmployeeProfileInput = {
   name: string;
   jobTitle: string;
   hourlyRate: number;
+  rateEffectiveDate?: string;
   department: string;
   startDate: string;
   photoPath?: string | null;
@@ -19,6 +25,7 @@ type NormalizedEmployeeProfile = {
   name: string;
   jobTitle: string;
   hourlyRate: number;
+  rateEffectiveDate: string;
   department: string;
   startDate: string;
   photoPath: string | null;
@@ -94,6 +101,13 @@ function validateEmployeeProfile(profile: NormalizedEmployeeProfile) {
     throw new Error('Start date must be in YYYY-MM-DD format.');
   }
 
+  if (!profile.rateEffectiveDate) {
+    throw new Error('Rate effective date is required.');
+  }
+  if (!isValidIsoDate(profile.rateEffectiveDate)) {
+    throw new Error('Rate effective date must be in YYYY-MM-DD format.');
+  }
+
   if (!profile.phoneNumber) {
     throw new Error('Phone number is required.');
   }
@@ -133,6 +147,8 @@ function normalizeEmployeeProfile(profile: EmployeeProfileInput): NormalizedEmpl
     name: normalizeRequiredText(profile.name),
     phoneNumber: normalizeRequiredText(profile.phoneNumber),
     photoPath: normalizeOptionalText(profile.photoPath),
+    rateEffectiveDate:
+      normalizeRequiredText(profile.rateEffectiveDate ?? profile.startDate),
     startDate: normalizeRequiredText(profile.startDate),
   };
 
@@ -149,7 +165,7 @@ function validateEmployeePin(pin: string) {
 const EMPLOYEE_PIN_SPACE_SIZE = 10 ** EMPLOYEE_PIN_LENGTH;
 const MAX_RANDOM_PIN_ATTEMPTS = EMPLOYEE_PIN_SPACE_SIZE * 2;
 
-type EmployeePinRecord = Pick<EmployeeRecord, 'pin_hash' | 'pin_code'>;
+type EmployeePinRecord = Pick<EmployeeRecord, 'pin_hash'>;
 
 function generateRandomPin() {
   return Math.floor(Math.random() * EMPLOYEE_PIN_SPACE_SIZE)
@@ -161,18 +177,15 @@ async function listEmployeePinHashes(excludeEmployeeId?: number) {
   const db = await getDatabase();
   if (typeof excludeEmployeeId === 'number') {
     return db.getAllAsync<EmployeePinRecord>(
-      'SELECT pin_hash, pin_code FROM employees WHERE id <> ?',
+      'SELECT pin_hash FROM employees WHERE id <> ?',
       excludeEmployeeId,
     );
   }
-  return db.getAllAsync<EmployeePinRecord>('SELECT pin_hash, pin_code FROM employees');
+  return db.getAllAsync<EmployeePinRecord>('SELECT pin_hash FROM employees');
 }
 
 async function isPinInHashes(pin: string, pinHashes: EmployeePinRecord[]) {
   for (const row of pinHashes) {
-    if (row.pin_code && row.pin_code === pin) {
-      return true;
-    }
     const isMatch = await verifyPin(pin, row.pin_hash);
     if (isMatch) {
       return true;
@@ -221,82 +234,32 @@ export async function getEmployeeById(employeeId: number) {
 
 export async function createEmployee(profile: EmployeeProfileInput) {
   const normalized = normalizeEmployeeProfile(profile);
-
   const generatedPin = await generateUniqueEmployeePin();
   validateEmployeePin(generatedPin);
-
-  const db = await getDatabase();
-  const timestamp = nowIso();
   const pinHash = await hashPin(generatedPin);
-  const result = await db.runAsync(
-    `INSERT INTO employees (
-       name,
-       job_title,
-       hourly_rate,
-       department,
-       start_date,
-       photo_path,
-       address,
-       email,
-       phone_number,
-       pin_hash,
-       pin_code,
-       active,
-       created_at,
-       updated_at
-     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-    normalized.name,
-    normalized.jobTitle,
-    normalized.hourlyRate,
-    normalized.department,
-    normalized.startDate,
-    normalized.photoPath,
-    normalized.address,
-    normalized.email,
-    normalized.phoneNumber,
-    pinHash,
-    generatedPin,
-    timestamp,
-    timestamp,
-  );
-
-  return {
-    employee: await getEmployeeById(result.lastInsertRowId),
-    pin: generatedPin,
-  };
-}
-
-export async function updateEmployee(
-  employeeId: number,
-  profile: EmployeeProfileInput,
-  nextPin?: string,
-) {
-  const normalized = normalizeEmployeeProfile(profile);
-
   const db = await getDatabase();
   const timestamp = nowIso();
+  let createdEmployeeId = 0;
 
-  if (nextPin && nextPin.trim().length > 0) {
-    const normalizedPin = nextPin.trim();
-    validateEmployeePin(normalizedPin);
-    await assertUniqueEmployeePin(normalizedPin, employeeId);
-    const pinHash = await hashPin(normalizedPin);
-    await db.runAsync(
-      `UPDATE employees
-       SET name = ?,
-           job_title = ?,
-           hourly_rate = ?,
-           department = ?,
-           start_date = ?,
-           photo_path = ?,
-           address = ?,
-           email = ?,
-           phone_number = ?,
-           pin_hash = ?,
-           pin_code = ?,
-           updated_at = ?
-       WHERE id = ?`,
+  await db.withTransactionAsync(async () => {
+    const result = await db.runAsync(
+      `INSERT INTO employees (
+         name,
+         job_title,
+         hourly_rate,
+         department,
+         start_date,
+         photo_path,
+         address,
+         email,
+         phone_number,
+         pin_hash,
+         pin_code,
+         active,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)`,
       normalized.name,
       normalized.jobTitle,
       normalized.hourlyRate,
@@ -307,36 +270,180 @@ export async function updateEmployee(
       normalized.email,
       normalized.phoneNumber,
       pinHash,
-      normalizedPin,
       timestamp,
-      employeeId,
+      timestamp,
     );
+    createdEmployeeId = result.lastInsertRowId;
+
+    await upsertEmployeePayRateRecord(db, {
+      effectiveStartDate: normalized.rateEffectiveDate,
+      employeeId: createdEmployeeId,
+      hourlyRate: normalized.hourlyRate,
+      timestamp,
+    });
+
+    await insertAuditLog(db, {
+      action: 'EMPLOYEE_CREATE',
+      details: {
+        active: true,
+        department: normalized.department,
+        employeeName: normalized.name,
+        hourlyRate: normalized.hourlyRate,
+        jobTitle: normalized.jobTitle,
+        rateEffectiveDate: normalized.rateEffectiveDate,
+        startDate: normalized.startDate,
+      },
+      entityId: createdEmployeeId,
+      entityType: 'EMPLOYEE',
+      summary: `Created employee ${normalized.name}.`,
+    });
+  });
+
+  return {
+    employee: await getEmployeeById(createdEmployeeId),
+    pin: generatedPin,
+  };
+}
+
+export async function updateEmployee(
+  employeeId: number,
+  profile: EmployeeProfileInput,
+  nextPin?: string,
+) {
+  const normalized = normalizeEmployeeProfile(profile);
+  const db = await getDatabase();
+  const timestamp = nowIso();
+  const currentEmployee = await getEmployeeById(employeeId);
+  if (!currentEmployee) {
+    throw new Error('Employee not found.');
+  }
+  const hourlyRateChanged = currentEmployee.hourly_rate !== normalized.hourlyRate;
+
+  if (nextPin && nextPin.trim().length > 0) {
+    const normalizedPin = nextPin.trim();
+    validateEmployeePin(normalizedPin);
+    await assertUniqueEmployeePin(normalizedPin, employeeId);
+    const pinHash = await hashPin(normalizedPin);
+    await db.withTransactionAsync(async () => {
+      if (hourlyRateChanged) {
+        const latestRate = await getLatestEmployeePayRate(employeeId, db);
+        await upsertEmployeePayRateRecord(db, {
+          effectiveStartDate:
+            normalized.rateEffectiveDate ||
+            latestRate?.effective_start_date ||
+            normalized.startDate,
+          employeeId,
+          hourlyRate: normalized.hourlyRate,
+          timestamp,
+        });
+      }
+
+      await db.runAsync(
+        `UPDATE employees
+         SET name = ?,
+             job_title = ?,
+             hourly_rate = ?,
+             department = ?,
+             start_date = ?,
+             photo_path = ?,
+             address = ?,
+             email = ?,
+             phone_number = ?,
+             pin_hash = ?,
+             pin_code = NULL,
+             updated_at = ?
+         WHERE id = ?`,
+        normalized.name,
+        normalized.jobTitle,
+        normalized.hourlyRate,
+        normalized.department,
+        normalized.startDate,
+        normalized.photoPath,
+        normalized.address,
+        normalized.email,
+        normalized.phoneNumber,
+        pinHash,
+        timestamp,
+        employeeId,
+      );
+
+      await insertAuditLog(db, {
+        action: 'EMPLOYEE_UPDATE',
+        details: {
+          department: normalized.department,
+          employeeName: normalized.name,
+          hourlyRateChanged,
+          hourlyRate: normalized.hourlyRate,
+          jobTitle: normalized.jobTitle,
+          previousHourlyRate: currentEmployee.hourly_rate,
+          rateEffectiveDate: hourlyRateChanged ? normalized.rateEffectiveDate : null,
+          startDate: normalized.startDate,
+          updatedPin: true,
+        },
+        entityId: employeeId,
+        entityType: 'EMPLOYEE',
+        summary: `Updated employee ${currentEmployee.name} profile and PIN.`,
+      });
+    });
   } else {
-    await db.runAsync(
-      `UPDATE employees
-       SET name = ?,
-           job_title = ?,
-           hourly_rate = ?,
-           department = ?,
-           start_date = ?,
-           photo_path = ?,
-           address = ?,
-           email = ?,
-           phone_number = ?,
-           updated_at = ?
-       WHERE id = ?`,
-      normalized.name,
-      normalized.jobTitle,
-      normalized.hourlyRate,
-      normalized.department,
-      normalized.startDate,
-      normalized.photoPath,
-      normalized.address,
-      normalized.email,
-      normalized.phoneNumber,
-      timestamp,
-      employeeId,
-    );
+    await db.withTransactionAsync(async () => {
+      if (hourlyRateChanged) {
+        const latestRate = await getLatestEmployeePayRate(employeeId, db);
+        await upsertEmployeePayRateRecord(db, {
+          effectiveStartDate:
+            normalized.rateEffectiveDate ||
+            latestRate?.effective_start_date ||
+            normalized.startDate,
+          employeeId,
+          hourlyRate: normalized.hourlyRate,
+          timestamp,
+        });
+      }
+
+      await db.runAsync(
+        `UPDATE employees
+         SET name = ?,
+             job_title = ?,
+             hourly_rate = ?,
+             department = ?,
+             start_date = ?,
+             photo_path = ?,
+             address = ?,
+             email = ?,
+             phone_number = ?,
+             updated_at = ?
+         WHERE id = ?`,
+        normalized.name,
+        normalized.jobTitle,
+        normalized.hourlyRate,
+        normalized.department,
+        normalized.startDate,
+        normalized.photoPath,
+        normalized.address,
+        normalized.email,
+        normalized.phoneNumber,
+        timestamp,
+        employeeId,
+      );
+
+      await insertAuditLog(db, {
+        action: 'EMPLOYEE_UPDATE',
+        details: {
+          department: normalized.department,
+          employeeName: normalized.name,
+          hourlyRateChanged,
+          hourlyRate: normalized.hourlyRate,
+          jobTitle: normalized.jobTitle,
+          previousHourlyRate: currentEmployee.hourly_rate,
+          rateEffectiveDate: hourlyRateChanged ? normalized.rateEffectiveDate : null,
+          startDate: normalized.startDate,
+          updatedPin: false,
+        },
+        entityId: employeeId,
+        entityType: 'EMPLOYEE',
+        summary: `Updated employee ${currentEmployee.name} profile.`,
+      });
+    });
   }
 
   return getEmployeeById(employeeId);
@@ -347,31 +454,64 @@ export async function resetEmployeePin(employeeId: number, pin?: string) {
   validateEmployeePin(nextPin);
   await assertUniqueEmployeePin(nextPin, employeeId);
   const db = await getDatabase();
+  const employee = await getEmployeeById(employeeId);
+  if (!employee) {
+    throw new Error('Employee not found.');
+  }
   const pinHash = await hashPin(nextPin);
   const timestamp = nowIso();
-  await db.runAsync(
-    `UPDATE employees
-     SET pin_hash = ?, pin_code = ?, updated_at = ?
-     WHERE id = ?`,
-    pinHash,
-    nextPin,
-    timestamp,
-    employeeId,
-  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE employees
+       SET pin_hash = ?, pin_code = NULL, updated_at = ?
+       WHERE id = ?`,
+      pinHash,
+      timestamp,
+      employeeId,
+    );
+
+    await insertAuditLog(db, {
+      action: 'EMPLOYEE_PIN_RESET',
+      details: {
+        employeeName: employee.name,
+        mode: pin?.trim().length ? 'MANUAL' : 'RANDOM',
+      },
+      entityId: employeeId,
+      entityType: 'EMPLOYEE',
+      summary: `Reset PIN for ${employee.name}.`,
+    });
+  });
   return { pin: nextPin };
 }
 
 export async function setEmployeeActive(employeeId: number, active: boolean) {
   const db = await getDatabase();
+  const employee = await getEmployeeById(employeeId);
+  if (!employee) {
+    throw new Error('Employee not found.');
+  }
   const timestamp = nowIso();
-  await db.runAsync(
-    `UPDATE employees
-     SET active = ?, updated_at = ?
-     WHERE id = ?`,
-    active ? 1 : 0,
-    timestamp,
-    employeeId,
-  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE employees
+       SET active = ?, updated_at = ?
+       WHERE id = ?`,
+      active ? 1 : 0,
+      timestamp,
+      employeeId,
+    );
+
+    await insertAuditLog(db, {
+      action: active ? 'EMPLOYEE_ACTIVATE' : 'EMPLOYEE_DEACTIVATE',
+      details: {
+        employeeName: employee.name,
+        nextActiveState: active,
+      },
+      entityId: employeeId,
+      entityType: 'EMPLOYEE',
+      summary: `${active ? 'Activated' : 'Deactivated'} employee ${employee.name}.`,
+    });
+  });
 }
 
 export async function findActiveEmployeeByPin(pin: string) {

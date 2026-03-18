@@ -3,19 +3,37 @@ import type {
   ClockEventSource,
   ClockEventWithEmployee,
 } from '../../types/database';
+import {
+  ADMIN_MANUAL_EVENT_MARKER_PHOTO_PATH,
+  AUTO_CLOCK_OUT_MARKER_PHOTO_PATH,
+  MAX_SHIFT_DURATION_HOURS,
+} from '../../constants/app';
 import type { PayPeriodPreview } from './payPeriod';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_SHIFT_DURATION_MS = MAX_SHIFT_DURATION_HOURS * 60 * 60 * 1000;
 const DEFAULT_OT1_WEEKLY_THRESHOLD_HOURS = 40;
 const DEFAULT_OT1_MULTIPLIER = 1.5;
 const DEFAULT_OT2_MULTIPLIER = 2;
 
 export type PayrollCompensationRules = {
   employeeHourlyRates?: Map<number, number>;
+  resolveEmployeeHourlyRate?: (employeeId: number, dayKey: string) => number;
   ot1WeeklyThresholdHours?: number;
   ot1Multiplier?: number;
   ot2Multiplier?: number;
   ot2HolidayDates?: string[];
+};
+
+export type EmployeeRateBreakdown = {
+  hourlyRate: number;
+  regularHours: number;
+  ot1Hours: number;
+  ot2Hours: number;
+  regularPay: number;
+  ot1Pay: number;
+  ot2Pay: number;
+  totalPay: number;
 };
 
 export type EmployeeShiftEntry = {
@@ -40,6 +58,9 @@ export type EmployeeShiftGroup = {
   employeeId: number;
   employeeName: string;
   hourlyRate: number;
+  hasMultipleRates: boolean;
+  maxHourlyRate: number;
+  minHourlyRate: number;
   totalHours: number;
   regularHours: number;
   ot1Hours: number;
@@ -49,6 +70,7 @@ export type EmployeeShiftGroup = {
   ot2Pay: number;
   totalPay: number;
   completedShiftCount: number;
+  rateBreakdowns: EmployeeRateBreakdown[];
   shifts: EmployeeShiftEntry[];
 };
 
@@ -71,6 +93,9 @@ export type PayrollHoursSummary = {
     employeeId: number;
     employeeName: string;
     hourlyRate: number;
+    hasMultipleRates: boolean;
+    maxHourlyRate: number;
+    minHourlyRate: number;
     hours: number;
     regularHours: number;
     ot1Hours: number;
@@ -80,6 +105,7 @@ export type PayrollHoursSummary = {
     ot2Pay: number;
     totalPay: number;
     completedShiftCount: number;
+    rateBreakdowns: EmployeeRateBreakdown[];
   }>;
   dayTotals: PayrollDayTotal[];
   weekTotals: PayrollWeekTotal[];
@@ -240,6 +266,9 @@ export function buildPayrollHoursSummary(
   rules: PayrollCompensationRules = {},
 ) {
   const hourlyRates = rules.employeeHourlyRates ?? new Map<number, number>();
+  const resolveEmployeeHourlyRate =
+    rules.resolveEmployeeHourlyRate ??
+    ((employeeId: number) => sanitizeHourlyRate(hourlyRates.get(employeeId)));
   const ot1WeeklyThresholdHours = sanitizePositiveNumber(
     rules.ot1WeeklyThresholdHours,
     DEFAULT_OT1_WEEKLY_THRESHOLD_HOURS,
@@ -274,11 +303,34 @@ export function buildPayrollHoursSummary(
     const employeeName = employeeNames.get(employeeId) ?? `Employee ${employeeId}`;
     const shifts: EmployeeShiftEntry[] = [];
     const completedShiftSegments: ShiftDaySegment[] = [];
+    const rateBreakdownTotals = new Map<number, EmployeeRateBreakdown>();
     let openClockIn: ClockEventWithEmployee | null = null;
     let completedShiftCount = 0;
     let completedTotalMs = 0;
+    const seenPunches = new Set<string>();
 
     for (const event of employeeRows) {
+      const punchKey = `${event.type}|${event.timestamp}`;
+      if (seenPunches.has(punchKey)) {
+        warnings.push(`${employeeName} has a duplicate ${event.type} punch at ${event.timestamp}.`);
+      } else {
+        seenPunches.add(punchKey);
+      }
+
+      if (
+        event.source === 'MANUAL' &&
+        event.admin_tag === 'NONE' &&
+        (
+          !event.photo_path ||
+          event.photo_path === AUTO_CLOCK_OUT_MARKER_PHOTO_PATH ||
+          event.photo_path === ADMIN_MANUAL_EVENT_MARKER_PHOTO_PATH
+        )
+      ) {
+        warnings.push(
+          `${employeeName} has a manual ${event.type} event without a captured photo.`,
+        );
+      }
+
       if (event.type === 'IN') {
         if (openClockIn) {
           warnings.push(
@@ -370,6 +422,12 @@ export function buildPayrollHoursSummary(
         continue;
       }
 
+      if (durationMs > MAX_SHIFT_DURATION_MS) {
+        warnings.push(
+          `${employeeName} has a shift longer than ${MAX_SHIFT_DURATION_HOURS} hours.`,
+        );
+      }
+
       completedShiftCount += 1;
       completedTotalMs += durationMs;
       addSegmentDurationByDay(
@@ -450,6 +508,9 @@ export function buildPayrollHoursSummary(
       let regularHours = 0;
       let ot1Hours = 0;
       let ot2Hours = 0;
+      const hourlyRate = sanitizeHourlyRate(
+        resolveEmployeeHourlyRate(employeeId, segment.dayKey),
+      );
 
       if (holidayDates.has(segment.dayKey)) {
         ot2Hours = segment.hours;
@@ -469,30 +530,83 @@ export function buildPayrollHoursSummary(
         shift.ot2Hours = roundHours(shift.ot2Hours + ot2Hours);
       }
 
+      const currentRateTotals = rateBreakdownTotals.get(hourlyRate) ?? {
+        hourlyRate,
+        ot1Hours: 0,
+        ot1Pay: 0,
+        ot2Hours: 0,
+        ot2Pay: 0,
+        regularHours: 0,
+        regularPay: 0,
+        totalPay: 0,
+      };
+      currentRateTotals.regularHours += regularHours;
+      currentRateTotals.ot1Hours += ot1Hours;
+      currentRateTotals.ot2Hours += ot2Hours;
+      currentRateTotals.regularPay += regularHours * hourlyRate;
+      currentRateTotals.ot1Pay += ot1Hours * hourlyRate * ot1Multiplier;
+      currentRateTotals.ot2Pay += ot2Hours * hourlyRate * ot2Multiplier;
+      currentRateTotals.totalPay =
+        currentRateTotals.regularPay +
+        currentRateTotals.ot1Pay +
+        currentRateTotals.ot2Pay;
+      rateBreakdownTotals.set(hourlyRate, currentRateTotals);
+
       runningWeekHours.set(segment.weekNumber, priorWeekHours + segment.hours);
     }
 
     employeeTotalsMs.set(employeeId, completedTotalMs);
-    const hourlyRate = sanitizeHourlyRate(hourlyRates.get(employeeId));
+    const hourlyRate = sanitizeHourlyRate(
+      resolveEmployeeHourlyRate(employeeId, payPeriod.periodEndDate),
+    );
+    const rateBreakdowns = Array.from(rateBreakdownTotals.values())
+      .map((entry) => ({
+        hourlyRate: entry.hourlyRate,
+        ot1Hours: roundHours(entry.ot1Hours),
+        ot1Pay: roundCurrency(entry.ot1Pay),
+        ot2Hours: roundHours(entry.ot2Hours),
+        ot2Pay: roundCurrency(entry.ot2Pay),
+        regularHours: roundHours(entry.regularHours),
+        regularPay: roundCurrency(entry.regularPay),
+        totalPay: roundCurrency(entry.totalPay),
+      }))
+      .sort((a, b) => a.hourlyRate - b.hourlyRate);
+    const minHourlyRate =
+      rateBreakdowns.length > 0 ? rateBreakdowns[0].hourlyRate : hourlyRate;
+    const maxHourlyRate =
+      rateBreakdowns.length > 0
+        ? rateBreakdowns[rateBreakdowns.length - 1].hourlyRate
+        : hourlyRate;
+    const hasMultipleRates = rateBreakdowns.length > 1;
     const regularHours = roundHours(
       shifts.reduce((sum, shift) => sum + shift.regularHours, 0),
     );
     const ot1Hours = roundHours(shifts.reduce((sum, shift) => sum + shift.ot1Hours, 0));
     const ot2Hours = roundHours(shifts.reduce((sum, shift) => sum + shift.ot2Hours, 0));
-    const regularPay = roundCurrency(regularHours * hourlyRate);
-    const ot1Pay = roundCurrency(ot1Hours * hourlyRate * ot1Multiplier);
-    const ot2Pay = roundCurrency(ot2Hours * hourlyRate * ot2Multiplier);
+    const regularPay = roundCurrency(
+      rateBreakdowns.reduce((sum, entry) => sum + entry.regularPay, 0),
+    );
+    const ot1Pay = roundCurrency(
+      rateBreakdowns.reduce((sum, entry) => sum + entry.ot1Pay, 0),
+    );
+    const ot2Pay = roundCurrency(
+      rateBreakdowns.reduce((sum, entry) => sum + entry.ot2Pay, 0),
+    );
     const totalPay = roundCurrency(regularPay + ot1Pay + ot2Pay);
 
     shiftsByEmployee.set(employeeId, {
       completedShiftCount,
       employeeId,
       employeeName,
+      hasMultipleRates,
       hourlyRate,
+      maxHourlyRate,
+      minHourlyRate,
       ot1Hours,
       ot1Pay,
       ot2Hours,
       ot2Pay,
+      rateBreakdowns,
       regularHours,
       regularPay,
       shifts,
@@ -506,12 +620,16 @@ export function buildPayrollHoursSummary(
       completedShiftCount: shiftsByEmployee.get(employeeId)?.completedShiftCount ?? 0,
       employeeId,
       employeeName: employeeNames.get(employeeId) ?? `Employee ${employeeId}`,
+      hasMultipleRates: shiftsByEmployee.get(employeeId)?.hasMultipleRates ?? false,
       hours: toHours(totalMs),
       hourlyRate: shiftsByEmployee.get(employeeId)?.hourlyRate ?? 0,
+      maxHourlyRate: shiftsByEmployee.get(employeeId)?.maxHourlyRate ?? 0,
+      minHourlyRate: shiftsByEmployee.get(employeeId)?.minHourlyRate ?? 0,
       ot1Hours: shiftsByEmployee.get(employeeId)?.ot1Hours ?? 0,
       ot1Pay: shiftsByEmployee.get(employeeId)?.ot1Pay ?? 0,
       ot2Hours: shiftsByEmployee.get(employeeId)?.ot2Hours ?? 0,
       ot2Pay: shiftsByEmployee.get(employeeId)?.ot2Pay ?? 0,
+      rateBreakdowns: shiftsByEmployee.get(employeeId)?.rateBreakdowns ?? [],
       regularHours: shiftsByEmployee.get(employeeId)?.regularHours ?? 0,
       regularPay: shiftsByEmployee.get(employeeId)?.regularPay ?? 0,
       totalPay: shiftsByEmployee.get(employeeId)?.totalPay ?? 0,

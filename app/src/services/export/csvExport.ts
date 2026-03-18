@@ -1,21 +1,5 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import { listAllClockEventsWithEmployee } from '../repositories/clockEventRepository';
-
-function escapeCsvValue(value: string) {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replaceAll('"', '""')}"`;
-  }
-  return value;
-}
-
-function ensureWriteDirectory() {
-  const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-  if (!directory) {
-    throw new Error('No writable directory is available.');
-  }
-  return directory;
-}
+import { escapeCsvValue, writeAndShareCsv } from './csvUtils';
 
 export async function exportClockEventsCsv() {
   const rows = await listAllClockEventsWithEmployee();
@@ -41,19 +25,9 @@ export async function exportClockEventsCsv() {
   }
 
   const csvContent = lines.join('\n');
-  const fileUri = `${ensureWriteDirectory()}clock-events-${Date.now()}.csv`;
-
-  await FileSystem.writeAsStringAsync(fileUri, csvContent, {
-    encoding: FileSystem.EncodingType.UTF8,
+  return writeAndShareCsv({
+    baseFileName: 'clock-events',
+    csvContent,
+    dialogTitle: 'Export Clock Events',
   });
-
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(fileUri, {
-      UTI: 'public.comma-separated-values-text',
-      dialogTitle: 'Export Clock Events',
-      mimeType: 'text/csv',
-    });
-  }
-
-  return fileUri;
 }

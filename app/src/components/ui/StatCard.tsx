@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, spacing, typography } from '../../theme';
+import { colors, radius, spacing, typography, withAlpha } from '../../theme';
 import SurfaceCard from './SurfaceCard';
 
 type StatCardProps = {
@@ -12,24 +12,24 @@ type StatCardProps = {
 
 const markerStyles = {
   accent: {
-    backgroundColor: colors.glowPrimary,
-    color: colors.primary,
+    backgroundColor: colors.tints.bronze,
+    color: colors.accents.bronze,
   },
   danger: {
-    backgroundColor: colors.dangerMuted,
-    color: colors.danger,
+    backgroundColor: colors.tints.danger,
+    color: colors.states.danger,
   },
   default: {
-    backgroundColor: colors.surfaceMuted,
-    color: colors.textSecondary,
+    backgroundColor: colors.backgrounds.secondary,
+    color: colors.text.secondary,
   },
   info: {
-    backgroundColor: colors.infoMuted,
-    color: colors.info,
+    backgroundColor: withAlpha(colors.accents.bronze, 0.12),
+    color: colors.accents.bronze,
   },
   warning: {
-    backgroundColor: colors.warningMuted,
-    color: colors.warning,
+    backgroundColor: colors.tints.terracotta,
+    color: colors.accents.terracotta,
   },
 } as const;
 
@@ -52,7 +52,11 @@ export default function StatCard({
           </View>
         ) : null}
       </View>
-      <Text style={styles.value}>{value}</Text>
+
+      <Text numberOfLines={1} style={styles.value}>
+        {value}
+      </Text>
+
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
     </SurfaceCard>
   );
@@ -61,7 +65,7 @@ export default function StatCard({
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    minHeight: 156,
+    minHeight: 148,
   },
   headerRow: {
     alignItems: 'center',
@@ -69,28 +73,30 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   label: {
-    ...typography.label,
-    color: colors.textSecondary,
+    ...typography.bodySm,
+    color: colors.text.secondary,
   },
   marker: {
     alignItems: 'center',
-    borderRadius: 16,
-    height: 44,
+    borderRadius: radius.pill,
     justifyContent: 'center',
-    width: 44,
+    minHeight: 28,
+    minWidth: 44,
+    paddingHorizontal: spacing.sm,
   },
   markerText: {
-    ...typography.eyebrow,
+    ...typography.micro,
     textTransform: 'uppercase',
   },
   subtitle: {
-    ...typography.body,
-    color: colors.textSecondary,
+    ...typography.bodySm,
+    color: colors.text.secondary,
     marginTop: spacing.xs,
   },
   value: {
-    ...typography.h1,
-    color: colors.textPrimary,
+    ...typography.screenTitle,
+    color: colors.text.primary,
+    fontVariant: ['tabular-nums'],
     marginTop: spacing.lg,
   },
 });

@@ -1,58 +1,89 @@
-import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import { colors, spacing, typography } from '../theme';
+import type { ReactNode } from 'react';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from 'react-native';
+import { colors, componentTokens, spacing, typography } from '../theme';
 
-type ButtonVariant = 'primary' | 'success' | 'danger' | 'neutral';
+export type ButtonVariant =
+  | 'primary'
+  | 'secondary'
+  | 'neutral'
+  | 'success'
+  | 'danger'
+  | 'ghost';
 
-type PrimaryButtonProps = {
+export type ButtonSize = 'sm' | 'md' | 'lg';
+
+type ResolvedButtonVariant = Exclude<ButtonVariant, 'neutral'>;
+
+export type PrimaryButtonProps = {
   title: string;
   onPress: () => void;
   disabled?: boolean;
   variant?: ButtonVariant;
+  size?: ButtonSize;
   fullWidth?: boolean;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
+  contentStyle?: StyleProp<ViewStyle>;
+  textStyle?: StyleProp<TextStyle>;
+  leadingAccessory?: ReactNode;
+  trailingAccessory?: ReactNode;
+  accessibilityLabel?: string;
+  testID?: string;
 };
 
-const variantColors: Record<
-  ButtonVariant,
-  { background: string; border: string; pressed: string; text: string }
-> = {
-  danger: {
-    background: colors.dangerMuted,
-    border: colors.dangerMuted,
-    pressed: 'rgba(242, 90, 106, 0.26)',
-    text: colors.danger,
-  },
-  neutral: {
-    background: colors.surfaceMuted,
-    border: colors.border,
-    pressed: colors.surfaceHighlight,
-    text: colors.textPrimary,
-  },
-  primary: {
-    background: colors.surfaceHighlight,
-    border: colors.borderStrong,
-    pressed: colors.surfaceMuted,
-    text: colors.textPrimary,
-  },
-  success: {
-    background: colors.primary,
-    border: colors.primaryPressed,
-    pressed: colors.primaryPressed,
-    text: colors.textInverse,
-  },
-};
+const disabledPalette = {
+  backgroundColor: colors.backgrounds.secondary,
+  borderColor: colors.borders.subtle,
+  textColor: colors.text.muted,
+} as const;
+
+function resolveVariant(variant: ButtonVariant): ResolvedButtonVariant {
+  return variant === 'neutral' ? 'secondary' : variant;
+}
+
+function getButtonTextStyle(size: ButtonSize): TextStyle {
+  if (size === 'sm') {
+    return typography.bodySm;
+  }
+
+  if (size === 'lg') {
+    return typography.body;
+  }
+
+  return typography.label;
+}
 
 export default function PrimaryButton({
-  title,
-  onPress,
+  accessibilityLabel,
+  contentStyle,
   disabled = false,
-  variant = 'primary',
   fullWidth = false,
+  leadingAccessory,
+  onPress,
+  size = 'md',
   style,
+  testID,
+  textStyle,
+  title,
+  trailingAccessory,
+  variant = 'primary',
 }: PrimaryButtonProps) {
-  const palette = variantColors[variant];
+  const resolvedVariant = resolveVariant(variant);
+  const variantTokens = componentTokens.button.variants[resolvedVariant];
+  const minHeight = componentTokens.button.heights[size];
+  const horizontalPadding = componentTokens.button.paddingX[size];
+  const labelStyle = getButtonTextStyle(size);
+
   return (
     <Pressable
+      accessibilityLabel={accessibilityLabel ?? title}
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
@@ -60,50 +91,71 @@ export default function PrimaryButton({
         styles.button,
         {
           backgroundColor: disabled
-            ? colors.disabled
+            ? disabledPalette.backgroundColor
             : pressed
-              ? palette.pressed
-              : palette.background,
-          borderColor: disabled ? colors.border : palette.border,
-          opacity: disabled ? 0.5 : 1,
+              ? variantTokens.pressedBackgroundColor
+              : variantTokens.backgroundColor,
+          borderColor: disabled ? disabledPalette.borderColor : variantTokens.borderColor,
+          minHeight,
+          opacity: disabled ? 0.7 : 1,
+          paddingHorizontal: horizontalPadding,
         },
+        variantTokens.shadow,
         fullWidth ? styles.fullWidth : undefined,
+        pressed && !disabled ? styles.pressed : undefined,
         style,
       ]}
+      testID={testID}
     >
-      <View style={styles.content}>
+      <View style={[styles.content, contentStyle]}>
+        {leadingAccessory ? <View style={styles.accessory}>{leadingAccessory}</View> : null}
         <Text
           adjustsFontSizeToFit
-          minimumFontScale={0.8}
+          minimumFontScale={0.82}
           numberOfLines={1}
-          style={[styles.text, { color: palette.text }]}
+          style={[
+            styles.text,
+            labelStyle,
+            {
+              color: disabled ? disabledPalette.textColor : variantTokens.textColor,
+            },
+            textStyle,
+          ]}
         >
           {title}
         </Text>
+        {trailingAccessory ? <View style={styles.accessory}>{trailingAccessory}</View> : null}
       </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  accessory: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   button: {
     alignItems: 'center',
-    borderRadius: 18,
+    borderRadius: componentTokens.button.radius,
     borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 56,
-    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
   content: {
     alignItems: 'center',
+    columnGap: spacing.xs,
+    flexDirection: 'row',
     justifyContent: 'center',
   },
   fullWidth: {
     width: '100%',
   },
+  pressed: {
+    transform: [{ translateY: 1 }],
+  },
   text: {
     ...typography.label,
-    fontFamily: 'AvenirNext-DemiBold',
+    textAlign: 'center',
   },
 });

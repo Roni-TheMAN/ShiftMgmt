@@ -2,7 +2,7 @@ import type { PropsWithChildren } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useAdminSession } from '../context/AdminSessionContext';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
-import { spacing } from '../theme';
+import { layout, spacing } from '../theme';
 import ScreenContainer from './ScreenContainer';
 
 type AdminScreenContainerProps = PropsWithChildren<{
@@ -17,10 +17,16 @@ export default function AdminScreenContainer({
   const { markActivity } = useAdminSession();
 
   return (
-    <ScreenContainer style={[styles.outer, style]}>
+    <ScreenContainer style={styles.outer}>
       <View
         onTouchStart={markActivity}
-        style={[styles.inner, { paddingHorizontal: horizontalPadding }]}
+        style={[
+          styles.inner,
+          {
+            paddingHorizontal: horizontalPadding,
+          },
+          style,
+        ]}
       >
         {children}
       </View>
@@ -30,11 +36,12 @@ export default function AdminScreenContainer({
 
 const styles = StyleSheet.create({
   inner: {
-    flex: 1,
-    maxWidth: 1360,
-    paddingVertical: spacing.lg,
-    width: '100%',
     alignSelf: 'center',
+    flex: 1,
+    maxWidth: layout.maxWidth.admin,
+    paddingTop: spacing.compact,
+    paddingBottom: spacing.xl,
+    width: '100%',
   },
   outer: {
     flex: 1,

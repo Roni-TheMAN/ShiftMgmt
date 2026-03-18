@@ -14,8 +14,16 @@ export interface EmployeeRecord {
   email: string | null;
   phone_number: string;
   pin_hash: string;
-  pin_code: string | null;
   active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmployeePayRateRecord {
+  id: number;
+  employee_id: number;
+  hourly_rate: number;
+  effective_start_date: string;
   created_at: string;
   updated_at: string;
 }
@@ -34,4 +42,24 @@ export interface ClockEventRecord {
 
 export interface ClockEventWithEmployee extends ClockEventRecord {
   employee_name: string | null;
+}
+
+export interface AuditLogRecord {
+  id: number;
+  actor_type: string;
+  actor_label: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  summary: string;
+  details_json: string | null;
+  created_at: string;
+}
+
+export interface PayrollPeriodApprovalRecord {
+  period_start_date: string;
+  period_end_date: string;
+  note: string | null;
+  approved_at: string;
+  updated_at: string;
 }

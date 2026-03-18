@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
-import { colors, spacing } from '../theme';
+import { colors, radius, spacing, withAlpha } from '../theme';
 
 type PinDotsProps = {
   length: number;
@@ -28,30 +28,30 @@ export default function PinDots({ length, maxLength }: PinDotsProps) {
 
 const styles = StyleSheet.create({
   dot: {
-    borderRadius: 999,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    height: 16,
-    width: 16,
+    height: 18,
+    width: 18,
   },
   dotCompact: {
-    height: 12,
-    width: 12,
+    height: 14,
+    width: 14,
   },
   dotEmpty: {
-    backgroundColor: colors.surfaceMuted,
-    borderColor: colors.border,
+    backgroundColor: colors.backgrounds.card,
+    borderColor: colors.borders.strong,
   },
   dotFilled: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-    shadowColor: colors.primary,
+    backgroundColor: colors.accents.bronze,
+    borderColor: colors.accents.bronze,
+    shadowColor: withAlpha(colors.accents.bronze, 0.4),
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.18,
     shadowRadius: 8,
   },
   row: {
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.sm,
     justifyContent: 'center',
   },
 });

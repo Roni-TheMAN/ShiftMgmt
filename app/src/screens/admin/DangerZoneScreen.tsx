@@ -10,6 +10,7 @@ import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useAdminSession } from '../../context/AdminSessionContext';
 import { DEFAULT_ADMIN_PIN } from '../../constants/app';
 import { deleteAllSavedPhotos } from '../../services/camera/photoStorage';
+import { createAuditLog } from '../../services/repositories/auditRepository';
 import { deleteAllOperationalData } from '../../services/repositories/maintenanceRepository';
 import { resetAdminPinToDefault } from '../../services/repositories/settingsRepository';
 import { colors, spacing, typography } from '../../theme';
@@ -37,6 +38,14 @@ export default function DangerZoneScreen({ navigation }: DangerZoneScreenProps) 
       await deleteAllOperationalData();
       await deleteAllSavedPhotos();
       await resetAdminPinToDefault();
+      await createAuditLog({
+        action: 'SYSTEM_DELETE_ALL_DATA',
+        details: {
+          resetAdminPinToDefault: true,
+        },
+        entityType: 'SYSTEM',
+        summary: 'Deleted all operational employee data and saved photos.',
+      });
       setConfirmText('');
       setMessage(
         `All local data was deleted. Admin PIN reset to default (${DEFAULT_ADMIN_PIN}).`,
